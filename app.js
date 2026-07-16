@@ -23,12 +23,12 @@ const app = {
     init: async function() {
         this.initServiceWorker();
         this.setupNetworkListeners();
-        this.loadData();
+        await this.loadData();
         this.bindEvents();
         this.navigate('dashboard');
         
         // Dummy data jika kosong (hanya untuk testing lokal sebelum konek GAS)
-        if (this.state.products.length === 0 && GAS_URL === 'https://script.google.com/macros/s/AKfycbxShfwNUtXVeZB_hReUyB8y5oRplJp2y2j-p-eoyiOmZcx_Ad6dhQZFlMIEsD2xgEMc-Q/exec') {
+        if (this.state.products.length === 0 && GAS_URL === 'YOUR_GOOGLE_APPS_SCRIPT_WEB_APP_URL') {
             this.state.products = [
                 { Barcode_ID: "1111", Nama_Camilan: "Arummanis Original", Harga: 15000, Stok: 50, Status: "Ready" },
                 { Barcode_ID: "2222", Nama_Camilan: "Arummanis Coklat", Harga: 17000, Stok: 30, Status: "Ready" }
@@ -70,17 +70,25 @@ const app = {
         }
     },
 
-    // --- Data Management ---
-    loadData: function() {
+    loadData: async function() {
         this.state.products = JSON.parse(localStorage.getItem('pos_products') || '[]');
         this.state.transactions = JSON.parse(localStorage.getItem('pos_transactions') || '[]');
         this.state.syncQueue = JSON.parse(localStorage.getItem('pos_queue') || '[]');
         this.updateProductDatalist();
         this.checkOfflineQueue();
         
-        if(navigator.onLine && GAS_URL !== 'YOUR_GOOGLE_APPS_SCRIPT_WEB_APP_URL') {
-            // Pada aplikasi aslinya kita bisa meload product dari GAS disini
-            // Untuk saat ini syncQueue yang bertugas
+        if (navigator.onLine && GAS_URL !== 'YOUR_GOOGLE_APPS_SCRIPT_WEB_APP_URL') {
+            try {
+                const response = await fetch(`${GAS_URL}?action=getProducts`);
+                const resData = await response.json();
+                if (resData.status === 'success' && resData.data) {
+                    this.state.products = resData.data;
+                    this.saveData();
+                    this.updateProductDatalist();
+                }
+            } catch (error) {
+                console.error('Gagal memuat produk dari Sheets:', error);
+            }
         }
     },
     saveData: function() {
