@@ -19,6 +19,8 @@ const app = {
         currentView: 'dashboard',
         scanner: null,
         isScannerRunning: false,
+        scanCooldown: false,
+        lastScannedBarcode: '',
         lastTransaction: null,
         tempSubtotal: 0,
         tempDiscount: 0,
@@ -200,7 +202,6 @@ const app = {
             this.state.cart.push({ ...product, qty: 1, editPrice: parseInt(product.Harga) });
         }
         this.updateCartUI();
-        Swal.fire({ toast:true, position:'top-end', icon:'success', title:`${product.Nama_Camilan} masuk keranjang`, showConfirmButton:false, timer:1000 });
     },
 
     updateCartItem: function(barcode, field, value) {
@@ -670,33 +671,43 @@ const app = {
         reader.classList.remove('hidden');
         this.state.productScanner = new Html5Qrcode("productScannerReader");
         
-        const readerWidth = reader.clientWidth || 320;
-        // Rectangular qrbox untuk deteksi barcode 1D yang lebih baik
+        const readerWidth = reader.clientWidth || 300;
+        const boxSize = Math.floor(Math.min(readerWidth * 0.8, 280));
         const config = { 
-            fps: 25, 
-            qrbox: { width: Math.floor(readerWidth * 0.88), height: 120 }
-            // Tidak pakai useBarCodeDetectorIfSupported — ZXing lebih lengkap untuk barcode 1D
+            fps: 15, 
+            qrbox: { width: boxSize, height: boxSize },
+            formatsToSupport: [
+                Html5QrcodeSupportedFormats.QR_CODE,
+                Html5QrcodeSupportedFormats.EAN_13,
+                Html5QrcodeSupportedFormats.EAN_8,
+                Html5QrcodeSupportedFormats.CODE_128,
+                Html5QrcodeSupportedFormats.CODE_39,
+                Html5QrcodeSupportedFormats.UPC_A,
+                Html5QrcodeSupportedFormats.UPC_E,
+                Html5QrcodeSupportedFormats.ITF
+            ]
         };
         
         const onScanSuccess = (text) => {
-            if ("vibrate" in navigator) navigator.vibrate(80);
+            if ("vibrate" in navigator) navigator.vibrate([100, 50, 100]);
             document.getElementById('prodFormBarcode').value = text;
             this.stopProductScanner();
+            Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: `Barcode: ${text}`, showConfirmButton: false, timer: 1500 });
         };
         
-        // Coba kamera belakang dahulu (untuk HP agar mendapat lensa autofocus)
+        // Coba kamera belakang dahulu
         this.state.productScanner.start({ facingMode: "environment" }, config, onScanSuccess, (err) => {})
         .then(() => {
             btn.classList.replace('btn-secondary', 'btn-danger');
             btn.innerHTML = '<i class="fas fa-times"></i>';
         }).catch(err => {
-            // Fallback ke kamera depan (untuk laptop/PC)
+            // Fallback kamera depan
             this.state.productScanner.start({ facingMode: "user" }, config, onScanSuccess, (err) => {})
             .then(() => {
                 btn.classList.replace('btn-secondary', 'btn-danger');
                 btn.innerHTML = '<i class="fas fa-times"></i>';
             }).catch(e => {
-                Swal.fire('Error', 'Gagal menyalakan kamera. Pastikan izin kamera sudah diberikan.', 'error');
+                Swal.fire('Error', 'Gagal menyalakan kamera.', 'error');
                 reader.classList.add('hidden');
             });
         });
@@ -731,35 +742,60 @@ const app = {
             return;
         }
         
-        if (this.state.syncQueue.length === 0) return;
+        if (this.state.syncQueue.length === 0) {
+            this.checkOfflineQueue();
+            return;
+        }
         
         document.getElementById('syncBanner').classList.remove('hidden');
         document.getElementById('syncText').textContent = `Menyinkronkan ${this.state.syncQueue.length} data...`;
         
-        let remainingQueue = [...this.state.syncQueue];
+        // Buat salinan queue untuk iterasi aman
+        const queueCopy = [...this.state.syncQueue];
+        let successCount = 0;
         
-        for (const item of this.state.syncQueue) {
+        for (let i = 0; i < queueCopy.length; i++) {
+            const item = queueCopy[i];
             try {
-                // Gunakan text/plain untuk bypass CORS preflight di Apps Script
+                document.getElementById('syncText').textContent = `Sync ${i+1}/${queueCopy.length}...`;
+                
                 const response = await fetch(GAS_URL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-                    body: JSON.stringify({ action: 'syncData', payload: item })
+                    body: JSON.stringify({ action: 'syncData', payload: item }),
+                    redirect: 'follow'
                 });
                 
-                const result = await response.json();
+                const responseText = await response.text();
+                let result;
+                try {
+                    result = JSON.parse(responseText);
+                } catch(parseErr) {
+                    console.error('Response bukan JSON:', responseText.substring(0, 200));
+                    continue;
+                }
+                
                 if (result.status === 'success') {
-                    remainingQueue = remainingQueue.filter(q => q !== item);
-                    this.state.syncQueue = remainingQueue;
+                    successCount++;
+                    // Hapus item dari queue secara aman berdasarkan index
+                    const idx = this.state.syncQueue.indexOf(item);
+                    if (idx > -1) this.state.syncQueue.splice(idx, 1);
                     this.saveData();
+                } else {
+                    console.error('Sync gagal dari server:', result.message);
                 }
             } catch (error) {
-                console.error('Gagal sync:', error);
-                break; // Stop syncing on first network failure
+                console.error('Gagal sync (network):', error);
+                break; // Berhenti di network failure pertama
             }
         }
         
-        this.checkOfflineQueue();
+        if (successCount > 0) {
+            document.getElementById('syncText').textContent = `${successCount} data tersinkronisasi!`;
+            setTimeout(() => this.checkOfflineQueue(), 2000);
+        } else {
+            this.checkOfflineQueue();
+        }
     },
 
     // --- Scanner Logic ---
@@ -770,26 +806,75 @@ const app = {
     startScanner: function() {
         document.getElementById('reader').classList.remove('hidden');
         this.state.scanner = new Html5Qrcode("reader");
+        this.state.scanCooldown = false;
+        this.state.lastScannedBarcode = '';
         
         const readerEl = document.getElementById('reader');
-        const readerWidth = readerEl.clientWidth || 320;
-        // Kotak scan berbentuk persegi panjang horizontal — optimal untuk barcode 1D
+        const readerWidth = readerEl.clientWidth || 300;
+        const boxSize = Math.floor(Math.min(readerWidth * 0.8, 280));
+        // Kotak scan berbentuk square sesuai permintaan user
         const config = { 
-            fps: 25,
-            qrbox: { width: Math.floor(readerWidth * 0.88), height: 120 }
-            // Sengaja tidak pakai useBarCodeDetectorIfSupported agar ZXing digunakan
-            // (BarcodeDetector bawaan Chrome Android tidak support EAN-13 / Code-128)
+            fps: 15,
+            qrbox: { width: boxSize, height: boxSize },
+            formatsToSupport: [
+                Html5QrcodeSupportedFormats.QR_CODE,
+                Html5QrcodeSupportedFormats.EAN_13,
+                Html5QrcodeSupportedFormats.EAN_8,
+                Html5QrcodeSupportedFormats.CODE_128,
+                Html5QrcodeSupportedFormats.CODE_39,
+                Html5QrcodeSupportedFormats.UPC_A,
+                Html5QrcodeSupportedFormats.UPC_E,
+                Html5QrcodeSupportedFormats.ITF
+            ]
         };
         
-        // Callback scan berhasil — TIDAK menghentikan kamera agar bisa scan terus-menerus
+        // Callback scan berhasil — PAUSE kamera, tampilkan popup, lalu RESUME
         const onScanSuccess = (text) => {
-            if ("vibrate" in navigator) navigator.vibrate(80);
+            // Cegah scan duplikat dari barcode yang sama berulang
+            if (this.state.scanCooldown) return;
+            this.state.scanCooldown = true;
+            this.state.lastScannedBarcode = text;
+            
+            if ("vibrate" in navigator) navigator.vibrate([100, 50, 100]);
+            
+            // Pause scanner sementara (kamera tetap menyala tapi tidak scan)
+            this.state.scanner.pause(true);
+            
             const p = this.state.products.find(x => compareBarcode(x.Barcode_ID, text));
             if(p) {
                 this.addToCart(p);
-                // Kamera TETAP menyala untuk scan produk berikutnya
+                const existing = this.state.cart.find(x => compareBarcode(x.Barcode_ID, text));
+                const currentQty = existing ? existing.qty : 1;
+                
+                Swal.fire({
+                    title: '✅ Produk Ditambahkan',
+                    html: `<strong>${p.Nama_Camilan}</strong><br>${formatRupiah(p.Harga)}<br><small>Qty di keranjang: ${currentQty}</small>`,
+                    icon: 'success',
+                    timer: 1500,
+                    timerProgressBar: true,
+                    showConfirmButton: false,
+                    allowOutsideClick: false
+                }).then(() => {
+                    // Resume scanner setelah popup tertutup
+                    this.state.scanCooldown = false;
+                    if (this.state.isScannerRunning && this.state.scanner) {
+                        try { this.state.scanner.resume(); } catch(e) {}
+                    }
+                });
             } else {
-                Swal.fire({ toast: true, position: 'top-end', icon: 'warning', title: `Barcode "${text}" tidak ada di database`, showConfirmButton: false, timer: 2500 });
+                Swal.fire({
+                    title: '❌ Tidak Ditemukan',
+                    html: `Barcode <strong>"${text}"</strong> tidak ada di database produk`,
+                    icon: 'error',
+                    timer: 2000,
+                    timerProgressBar: true,
+                    showConfirmButton: false
+                }).then(() => {
+                    this.state.scanCooldown = false;
+                    if (this.state.isScannerRunning && this.state.scanner) {
+                        try { this.state.scanner.resume(); } catch(e) {}
+                    }
+                });
             }
         };
         
