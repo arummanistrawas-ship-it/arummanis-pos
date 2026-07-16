@@ -598,7 +598,11 @@ const app = {
                 const backCamera = devices.find(d => d.label.toLowerCase().includes('back') || d.label.toLowerCase().includes('belakang'));
                 if (backCamera) cameraId = backCamera.id;
                 
-                this.state.productScanner.start(cameraId, { fps: 10, qrbox: { width: 250, height: 100 } }, 
+                this.state.productScanner.start(cameraId, { 
+                    fps: 20, 
+                    // qrbox dihapus agar area scan lebih luas (full layar kamera)
+                    disableFlip: false 
+                }, 
                     (text) => {
                         if ("vibrate" in navigator) navigator.vibrate(100);
                         document.getElementById('prodFormBarcode').value = text;
@@ -697,7 +701,10 @@ const app = {
                 const backCamera = devices.find(d => d.label.toLowerCase().includes('back') || d.label.toLowerCase().includes('belakang'));
                 if (backCamera) cameraId = backCamera.id;
                 
-                this.state.scanner.start(cameraId, { fps: 10, qrbox: { width: 250, height: 150 } }, 
+                this.state.scanner.start(cameraId, { 
+                    fps: 20, 
+                    disableFlip: false 
+                }, 
                     (text) => {
                         if ("vibrate" in navigator) navigator.vibrate(100);
                         const p = this.state.products.find(x => x.Barcode_ID === text);
