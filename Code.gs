@@ -219,8 +219,10 @@ function saveProduct(product) {
   // 1. Update/Insert ke DatabaseProduk
   var exists = false;
   var prodRow = -1;
+  var searchBarcode = (product.oldBarcode && product.oldBarcode !== "") ? product.oldBarcode : product.Barcode_ID;
+  
   for (var i = 1; i < pData.length; i++) {
-    if (pData[i][pBarcodeCol].toString() === product.Barcode_ID.toString()) {
+    if (pData[i][pBarcodeCol].toString() === searchBarcode.toString()) {
       exists = true;
       prodRow = i + 1;
       break;
@@ -231,12 +233,25 @@ function saveProduct(product) {
     pSheet.getRange(prodRow, 1, 1, 3).setValues([[
       product.Barcode_ID, product.Nama_Camilan, product.Harga
     ]]);
+    
+    // Jika barcode diubah, perbarui juga Barcode_ID di seluruh batch StokBatch
+    if (product.oldBarcode && product.oldBarcode !== "" && product.oldBarcode.toString() !== product.Barcode_ID.toString()) {
+      var bData = bSheet.getDataRange().getValues();
+      var bBarcodeCol = bData[0].indexOf("Barcode_ID");
+      if (bBarcodeCol > -1) {
+        for (var j = 1; j < bData.length; j++) {
+          if (bData[j][bBarcodeCol].toString() === product.oldBarcode.toString()) {
+            bSheet.getRange(j + 1, bBarcodeCol + 1).setValue(product.Barcode_ID);
+          }
+        }
+      }
+    }
   } else {
     pSheet.appendRow([product.Barcode_ID, product.Nama_Camilan, product.Harga]);
   }
   
-  // 2. Buat Batch Awal di StokBatch (Jika stok > 0 dan data batch dikirimkan)
-  if (parseInt(product.Stok) > 0) {
+  // 2. Buat Batch Awal di StokBatch (HANYA jika produk BARU dan stok > 0)
+  if (!product.oldBarcode && parseInt(product.Stok) > 0) {
     var batchId = "B-" + Date.now();
     var tanggalMasuk = formatDate(new Date());
     var tanggalExpired = product.Tanggal_Expired || formatDate(new Date(Date.now() + 365*24*60*60*1000)); // Default 1 tahun

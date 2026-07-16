@@ -613,7 +613,7 @@ const app = {
             this.state.products.push(product);
         }
 
-        this.state.syncQueue.push({ type: 'product', data: product });
+        this.state.syncQueue.push({ type: 'product', data: { ...product, oldBarcode: oldId } });
         this.saveData();
         this.updateProductDatalist();
         this.closeProductForm();
@@ -648,13 +648,11 @@ const app = {
         reader.classList.remove('hidden');
         this.state.productScanner = new Html5Qrcode("productScannerReader");
         
+        const minSide = Math.min(reader.clientWidth || 300, window.innerHeight || 600);
+        const boxSize = Math.floor(minSide * 0.75);
         const config = { 
             fps: 10, 
-            qrbox: (w, h) => {
-                const min = Math.min(w, h);
-                const size = Math.floor(min * 0.75);
-                return { width: size, height: size };
-            },
+            qrbox: { width: boxSize, height: boxSize },
             useBarCodeDetectorIfSupported: true
         };
         
@@ -754,13 +752,12 @@ const app = {
         document.getElementById('reader').classList.remove('hidden');
         this.state.scanner = new Html5Qrcode("reader");
         
+        const readerEl = document.getElementById('reader');
+        const minSide = Math.min(readerEl.clientWidth || 300, window.innerHeight || 600);
+        const boxSize = Math.floor(minSide * 0.75);
         const config = { 
             fps: 10, 
-            qrbox: (w, h) => {
-                const min = Math.min(w, h);
-                const size = Math.floor(min * 0.75);
-                return { width: size, height: size };
-            },
+            qrbox: { width: boxSize, height: boxSize },
             useBarCodeDetectorIfSupported: true
         };
         
