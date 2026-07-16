@@ -129,3 +129,14 @@ body { background: linear-gradient(135deg, #fdfbfb 0%, #ebedee 100%); color: var
 .receipt-card h2 { text-align: center; margin-bottom: 1rem; }
 .receipt-card .r-row { display: flex; justify-content: space-between; margin-bottom: 5px; }
 .receipt-card hr { border: 1px dashed #ccc; margin: 10px 0; }
+
+/* Camera Scanner Container Styles */
+#reader, #productScannerReader {
+    width: 100%;
+    max-width: 100%;
+    margin: 0.5rem auto;
+    background: #000;
+    border-radius: 12px;
+    overflow: hidden;
+    aspect-ratio: 1; /* Konsisten berbentuk kotak persegi */
+}
