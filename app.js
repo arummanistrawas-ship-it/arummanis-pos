@@ -592,50 +592,38 @@ const app = {
         reader.classList.remove('hidden');
         this.state.productScanner = new Html5Qrcode("productScannerReader");
         
-        Html5Qrcode.getCameras().then(devices => {
-            if (devices && devices.length) {
-                let cameraId = devices[0].id;
-                const backCamera = devices.find(d => d.label.toLowerCase().includes('back') || d.label.toLowerCase().includes('belakang'));
-                if (backCamera) cameraId = backCamera.id;
-                
-                const formats = window.Html5QrcodeSupportedFormats ? [ 
-                    Html5QrcodeSupportedFormats.QR_CODE, 
-                    Html5QrcodeSupportedFormats.EAN_13, 
-                    Html5QrcodeSupportedFormats.EAN_8, 
-                    Html5QrcodeSupportedFormats.UPC_A, 
-                    Html5QrcodeSupportedFormats.CODE_128, 
-                    Html5QrcodeSupportedFormats.CODE_39, 
-                    Html5QrcodeSupportedFormats.CODE_93 
-                ] : [];
-                
-                const config = { 
-                    fps: 15, 
-                    qrbox: { width: 250, height: 250 },
-                    aspectRatio: 1.0,
-                    formatsToSupport: formats
-                };
-                
-                this.state.productScanner.start(cameraId, config, 
-                    (text) => {
-                        if ("vibrate" in navigator) navigator.vibrate(100);
-                        document.getElementById('prodFormBarcode').value = text;
-                        this.stopProductScanner();
-                    }, 
-                    (err) => {}
-                ).then(() => {
-                    btn.classList.replace('btn-secondary', 'btn-danger');
-                    btn.innerHTML = '<i class="fas fa-times"></i>';
-                }).catch(err => {
-                    Swal.fire('Error', 'Gagal menyalakan kamera', 'error');
-                    reader.classList.add('hidden');
-                });
-            } else {
-                Swal.fire('Error', 'Kamera tidak ditemukan', 'error');
-                reader.classList.add('hidden');
-            }
+        const config = { 
+            fps: 10, 
+            qrbox: { width: 250, height: 250 }
+        };
+        
+        // Coba kamera belakang dahulu (untuk HP agar mendapat lensa autofocus)
+        this.state.productScanner.start({ facingMode: "environment" }, config, 
+            (text) => {
+                if ("vibrate" in navigator) navigator.vibrate(100);
+                document.getElementById('prodFormBarcode').value = text;
+                this.stopProductScanner();
+            }, 
+            (err) => {}
+        ).then(() => {
+            btn.classList.replace('btn-secondary', 'btn-danger');
+            btn.innerHTML = '<i class="fas fa-times"></i>';
         }).catch(err => {
-            Swal.fire('Error', 'Izin kamera ditolak browser', 'error');
-            reader.classList.add('hidden');
+            // Fallback ke kamera depan (untuk laptop/PC)
+            this.state.productScanner.start({ facingMode: "user" }, config,
+                (text) => {
+                    if ("vibrate" in navigator) navigator.vibrate(100);
+                    document.getElementById('prodFormBarcode').value = text;
+                    this.stopProductScanner();
+                },
+                (err) => {}
+            ).then(() => {
+                btn.classList.replace('btn-secondary', 'btn-danger');
+                btn.innerHTML = '<i class="fas fa-times"></i>';
+            }).catch(e => {
+                Swal.fire('Error', 'Gagal menyalakan kamera.', 'error');
+                reader.classList.add('hidden');
+            });
         });
     },
 
@@ -708,54 +696,46 @@ const app = {
         document.getElementById('reader').classList.remove('hidden');
         this.state.scanner = new Html5Qrcode("reader");
         
-        Html5Qrcode.getCameras().then(devices => {
-            if (devices && devices.length) {
-                let cameraId = devices[0].id;
-                const backCamera = devices.find(d => d.label.toLowerCase().includes('back') || d.label.toLowerCase().includes('belakang'));
-                if (backCamera) cameraId = backCamera.id;
+        const config = { 
+            fps: 10, 
+            qrbox: { width: 250, height: 250 }
+        };
+        
+        // Coba kamera belakang dahulu (autofokus HP)
+        this.state.scanner.start({ facingMode: "environment" }, config, 
+            (text) => {
+                if ("vibrate" in navigator) navigator.vibrate(100);
+                const p = this.state.products.find(x => x.Barcode_ID === text);
+                if(p) this.addToCart(p);
+                else Swal.fire('Error', 'Barcode tidak ditemukan', 'error');
                 
-                const formats = window.Html5QrcodeSupportedFormats ? [ 
-                    Html5QrcodeSupportedFormats.QR_CODE, 
-                    Html5QrcodeSupportedFormats.EAN_13, 
-                    Html5QrcodeSupportedFormats.EAN_8, 
-                    Html5QrcodeSupportedFormats.UPC_A, 
-                    Html5QrcodeSupportedFormats.CODE_128, 
-                    Html5QrcodeSupportedFormats.CODE_39, 
-                    Html5QrcodeSupportedFormats.CODE_93 
-                ] : [];
-                
-                const config = { 
-                    fps: 15, 
-                    qrbox: { width: 250, height: 250 },
-                    aspectRatio: 1.0,
-                    formatsToSupport: formats
-                };
-                
-                this.state.scanner.start(cameraId, config, 
-                    (text) => {
-                        if ("vibrate" in navigator) navigator.vibrate(100);
-                        const p = this.state.products.find(x => x.Barcode_ID === text);
-                        if(p) this.addToCart(p);
-                        else Swal.fire('Error', 'Barcode tidak ditemukan', 'error');
-                        
-                        this.stopScanner();
-                    }, 
-                    (err) => {}
-                ).then(() => {
-                    this.state.isScannerRunning = true;
-                    document.getElementById('cameraBtnText').textContent = 'Tutup';
-                    document.getElementById('toggleCameraBtn').classList.replace('btn-primary', 'btn-danger');
-                }).catch(err => {
-                    Swal.fire('Error', 'Gagal menyalakan kamera', 'error');
-                    document.getElementById('reader').classList.add('hidden');
-                });
-            } else {
-                Swal.fire('Error', 'Kamera tidak ditemukan di perangkat ini', 'error');
-                document.getElementById('reader').classList.add('hidden');
-            }
+                this.stopScanner();
+            }, 
+            (err) => {}
+        ).then(() => {
+            this.state.isScannerRunning = true;
+            document.getElementById('cameraBtnText').textContent = 'Tutup';
+            document.getElementById('toggleCameraBtn').classList.replace('btn-primary', 'btn-danger');
         }).catch(err => {
-            Swal.fire('Error', 'Izin kamera ditolak browser', 'error');
-            document.getElementById('reader').classList.add('hidden');
+            // Fallback ke kamera depan (laptop/PC)
+            this.state.scanner.start({ facingMode: "user" }, config,
+                (text) => {
+                    if ("vibrate" in navigator) navigator.vibrate(100);
+                    const p = this.state.products.find(x => x.Barcode_ID === text);
+                    if(p) this.addToCart(p);
+                    else Swal.fire('Error', 'Barcode tidak ditemukan', 'error');
+                    
+                    this.stopScanner();
+                },
+                (err) => {}
+            ).then(() => {
+                this.state.isScannerRunning = true;
+                document.getElementById('cameraBtnText').textContent = 'Tutup';
+                document.getElementById('toggleCameraBtn').classList.replace('btn-primary', 'btn-danger');
+            }).catch(e => {
+                Swal.fire('Error', 'Gagal menyalakan kamera.', 'error');
+                document.getElementById('reader').classList.add('hidden');
+            });
         });
     },
     stopScanner: function() {
