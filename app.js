@@ -202,6 +202,7 @@ const app = {
             this.state.cart.push({ ...product, qty: 1, editPrice: parseInt(product.Harga) });
         }
         this.updateCartUI();
+        Swal.fire({ toast:true, position:'top-end', icon:'success', title:`${product.Nama_Camilan} ditambahkan`, showConfirmButton:false, timer:1500 });
     },
 
     updateCartItem: function(barcode, field, value) {
@@ -828,54 +829,33 @@ const app = {
             ]
         };
         
-        // Callback scan berhasil — PAUSE kamera, tampilkan popup, lalu RESUME
+        // Callback scan berhasil — Kamera tetap membaca (tanpa pause), dengan cooldown 1.5 detik
         const onScanSuccess = (text) => {
-            // Cegah scan duplikat dari barcode yang sama berulang
+            // Cegah scan duplikat dalam jeda waktu singkat
             if (this.state.scanCooldown) return;
             this.state.scanCooldown = true;
             this.state.lastScannedBarcode = text;
             
             if ("vibrate" in navigator) navigator.vibrate([100, 50, 100]);
             
-            // Pause scanner sementara (kamera tetap menyala tapi tidak scan)
-            this.state.scanner.pause(true);
-            
             const p = this.state.products.find(x => compareBarcode(x.Barcode_ID, text));
             if(p) {
                 this.addToCart(p);
-                const existing = this.state.cart.find(x => compareBarcode(x.Barcode_ID, text));
-                const currentQty = existing ? existing.qty : 1;
-                
-                Swal.fire({
-                    title: '✅ Produk Ditambahkan',
-                    html: `<strong>${p.Nama_Camilan}</strong><br>${formatRupiah(p.Harga)}<br><small>Qty di keranjang: ${currentQty}</small>`,
-                    icon: 'success',
-                    timer: 1500,
-                    timerProgressBar: true,
-                    showConfirmButton: false,
-                    allowOutsideClick: false
-                }).then(() => {
-                    // Resume scanner setelah popup tertutup
-                    this.state.scanCooldown = false;
-                    if (this.state.isScannerRunning && this.state.scanner) {
-                        try { this.state.scanner.resume(); } catch(e) {}
-                    }
-                });
             } else {
                 Swal.fire({
-                    title: '❌ Tidak Ditemukan',
-                    html: `Barcode <strong>"${text}"</strong> tidak ada di database produk`,
+                    toast: true,
+                    position: 'top-end',
                     icon: 'error',
-                    timer: 2000,
-                    timerProgressBar: true,
-                    showConfirmButton: false
-                }).then(() => {
-                    this.state.scanCooldown = false;
-                    if (this.state.isScannerRunning && this.state.scanner) {
-                        try { this.state.scanner.resume(); } catch(e) {}
-                    }
+                    title: `Barcode "${text}" tidak ditemukan`,
+                    showConfirmButton: false,
+                    timer: 2000
                 });
             }
+            
+            // Lepas cooldown setelah 1.5 detik, scanner siap baca barcode lagi
+            setTimeout(() => {
+                this.state.scanCooldown = false;
+            }, 1500);
         };
         
         // Coba kamera belakang dahulu (autofokus HP)
