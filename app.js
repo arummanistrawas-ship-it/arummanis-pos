@@ -598,11 +598,14 @@ const app = {
                 const backCamera = devices.find(d => d.label.toLowerCase().includes('back') || d.label.toLowerCase().includes('belakang'));
                 if (backCamera) cameraId = backCamera.id;
                 
-                this.state.productScanner.start(cameraId, { 
-                    fps: 20, 
-                    // qrbox dihapus agar area scan lebih luas (full layar kamera)
-                    disableFlip: false 
-                }, 
+                const config = { 
+                    fps: 15, 
+                    qrbox: { width: 300, height: 150 },
+                    formatsToSupport: [ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 14, 15 ], // Supports all formats explicitly (ZXing enum)
+                    experimentalFeatures: { useBarCodeDetectorIfSupported: true }
+                };
+                
+                this.state.productScanner.start(cameraId, config, 
                     (text) => {
                         if ("vibrate" in navigator) navigator.vibrate(100);
                         document.getElementById('prodFormBarcode').value = text;
@@ -701,10 +704,14 @@ const app = {
                 const backCamera = devices.find(d => d.label.toLowerCase().includes('back') || d.label.toLowerCase().includes('belakang'));
                 if (backCamera) cameraId = backCamera.id;
                 
-                this.state.scanner.start(cameraId, { 
-                    fps: 20, 
-                    disableFlip: false 
-                }, 
+                const config = { 
+                    fps: 15, 
+                    qrbox: { width: 300, height: 150 },
+                    formatsToSupport: [ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 14, 15 ],
+                    experimentalFeatures: { useBarCodeDetectorIfSupported: true }
+                };
+                
+                this.state.scanner.start(cameraId, config, 
                     (text) => {
                         if ("vibrate" in navigator) navigator.vibrate(100);
                         const p = this.state.products.find(x => x.Barcode_ID === text);
