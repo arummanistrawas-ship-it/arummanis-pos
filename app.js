@@ -4,6 +4,12 @@ const GAS_URL = 'https://script.google.com/macros/s/AKfycbxShfwNUtXVeZB_hReUyB8y
 // Utility format uang
 const formatRupiah = (number) => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(number);
 
+// Helper pembanding barcode tahan crash tipe data (String/Number) dan Null/Undefined
+const compareBarcode = (a, b) => {
+    if (a === null || a === undefined || b === null || b === undefined) return false;
+    return a.toString().trim() === b.toString().trim();
+};
+
 const app = {
     state: {
         products: [],
@@ -26,17 +32,26 @@ const app = {
         await this.loadData();
         this.bindEvents();
         
-        // Inisialisasi awal history state untuk navigasi HP
-        history.replaceState({ view: 'dashboard' }, '', '#dashboard');
+        // Baca view dari hash URL untuk mendukung refresh halaman langsung ke menu aktif
+        const initialView = window.location.hash ? window.location.hash.substring(1) : 'dashboard';
+        history.replaceState({ view: initialView }, '', '#' + initialView);
+        
+        // Blokir popstate pertama kali (ghost event di WebView)
+        let isInitialLoad = true;
         window.addEventListener('popstate', (event) => {
+            if (isInitialLoad) {
+                isInitialLoad = false;
+                return;
+            }
             if (event.state && event.state.view) {
                 this.navigate(event.state.view, false);
             } else {
                 this.navigate('dashboard', false);
             }
         });
+        setTimeout(() => { isInitialLoad = false; }, 500);
         
-        this.navigate('dashboard', false);
+        this.navigate(initialView, false);
         
         // Dummy data jika kosong (hanya untuk testing lokal sebelum konek GAS)
         if (this.state.products.length === 0 && GAS_URL === 'YOUR_GOOGLE_APPS_SCRIPT_WEB_APP_URL') {
@@ -172,7 +187,7 @@ const app = {
             return;
         }
 
-        const existing = this.state.cart.find(x => x.Barcode_ID === product.Barcode_ID);
+        const existing = this.state.cart.find(x => compareBarcode(x.Barcode_ID, product.Barcode_ID));
         if(existing) {
             if(existing.qty >= parseInt(product.Stok)) {
                 Swal.fire('Stok Terbatas', `Hanya tersedia ${product.Stok} item`, 'warning');
@@ -187,11 +202,11 @@ const app = {
     },
 
     updateCartItem: function(barcode, field, value) {
-        const item = this.state.cart.find(x => x.Barcode_ID === barcode);
+        const item = this.state.cart.find(x => compareBarcode(x.Barcode_ID, barcode));
         if(item) {
             if(field === 'qty') {
                 const q = parseInt(value) || 1;
-                const p = this.state.products.find(x => x.Barcode_ID === barcode);
+                const p = this.state.products.find(x => compareBarcode(x.Barcode_ID, barcode));
                 if(q > parseInt(p.Stok)) {
                     Swal.fire('Stok Terbatas', `Maksimal ${p.Stok}`, 'warning');
                     item.qty = parseInt(p.Stok);
@@ -208,7 +223,7 @@ const app = {
     },
 
     removeCartItem: function(barcode) {
-        this.state.cart = this.state.cart.filter(x => x.Barcode_ID !== barcode);
+        this.state.cart = this.state.cart.filter(x => !compareBarcode(x.Barcode_ID, barcode));
         this.updateCartUI();
     },
 
@@ -337,7 +352,7 @@ const app = {
 
         // Update local stock
         trx.items.forEach(item => {
-            const p = this.state.products.find(x => x.Barcode_ID === item.Barcode_ID);
+            const p = this.state.products.find(x => compareBarcode(x.Barcode_ID, item.Barcode_ID));
             if(p) {
                 p.Stok = Math.max(0, parseInt(p.Stok) - item.qty);
                 if(p.Stok === 0) p.Status = 'Habis';
@@ -421,7 +436,7 @@ const app = {
             if(res.isConfirmed) {
                 // Kembalikan stok
                 trx.items.forEach(item => {
-                    const p = this.state.products.find(x => x.Barcode_ID === item.Barcode_ID);
+                    const p = this.state.products.find(x => compareBarcode(x.Barcode_ID, item.Barcode_ID));
                     if(p) p.Stok = parseInt(p.Stok) + item.qty;
                 });
                 
@@ -540,7 +555,7 @@ const app = {
         const batchFields = document.getElementById('prodFormBatchFields');
         
         if (barcode && typeof barcode === 'string') {
-            const p = this.state.products.find(x => x.Barcode_ID === barcode);
+            const p = this.state.products.find(x => compareBarcode(x.Barcode_ID, barcode));
             document.getElementById('productFormTitle').textContent = 'Edit Produk';
             document.getElementById('prodFormId').value = p.Barcode_ID;
             document.getElementById('prodFormBarcode').value = p.Barcode_ID;
@@ -603,13 +618,13 @@ const app = {
 
         if (oldId) {
             // Jika ganti barcode, pastikan barcode baru belum dipakai produk lain
-            if(oldId !== newBarcode && this.state.products.find(x => x.Barcode_ID === newBarcode)) {
+            if(!compareBarcode(oldId, newBarcode) && this.state.products.find(x => compareBarcode(x.Barcode_ID, newBarcode))) {
                 return Swal.fire('Error', 'Barcode sudah dipakai produk lain!', 'error');
             }
-            const index = this.state.products.findIndex(x => x.Barcode_ID === oldId);
+            const index = this.state.products.findIndex(x => compareBarcode(x.Barcode_ID, oldId));
             if(index > -1) this.state.products[index] = product;
         } else {
-            if(this.state.products.find(x => x.Barcode_ID === newBarcode)) return Swal.fire('Error', 'Barcode sudah ada!', 'error');
+            if(this.state.products.find(x => compareBarcode(x.Barcode_ID, newBarcode))) return Swal.fire('Error', 'Barcode sudah ada!', 'error');
             this.state.products.push(product);
         }
 
@@ -626,7 +641,7 @@ const app = {
             title: 'Hapus Produk?', text: 'Produk ini akan dihapus dari sistem', icon: 'warning', showCancelButton: true
         }).then(res => {
             if(res.isConfirmed) {
-                this.state.products = this.state.products.filter(x => x.Barcode_ID !== barcode);
+                this.state.products = this.state.products.filter(x => !compareBarcode(x.Barcode_ID, barcode));
                 this.state.syncQueue.push({ type: 'delete_product', data: { Barcode_ID: barcode } });
                 this.saveData();
                 this.updateProductDatalist();
@@ -765,7 +780,7 @@ const app = {
         this.state.scanner.start({ facingMode: "environment" }, config, 
             (text) => {
                 if ("vibrate" in navigator) navigator.vibrate(100);
-                const p = this.state.products.find(x => x.Barcode_ID === text);
+                const p = this.state.products.find(x => compareBarcode(x.Barcode_ID, text));
                 if(p) this.addToCart(p);
                 else Swal.fire('Error', 'Barcode tidak ditemukan', 'error');
                 
@@ -780,7 +795,7 @@ const app = {
             // Fallback ke kamera depan (laptop/PC)
             this.state.scanner.start({ facingMode: "user" }, config, (text) => {
                 if ("vibrate" in navigator) navigator.vibrate(100);
-                const p = this.state.products.find(x => x.Barcode_ID === text);
+                const p = this.state.products.find(x => compareBarcode(x.Barcode_ID, text));
                 if(p) this.addToCart(p);
                 else Swal.fire('Error', 'Barcode tidak ditemukan', 'error');
                 

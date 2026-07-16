@@ -91,6 +91,7 @@ function getProducts() {
   var pBarcodeCol = pHeaders.indexOf("Barcode_ID");
   var pNameCol = pHeaders.indexOf("Nama_Camilan");
   var pPriceCol = pHeaders.indexOf("Harga_Jual");
+  if (pPriceCol === -1) pPriceCol = pHeaders.indexOf("Harga");
   
   for (var i = 1; i < pData.length; i++) {
     var barcode = pData[i][pBarcodeCol].toString();
