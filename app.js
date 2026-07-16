@@ -19,8 +19,8 @@ const app = {
         currentView: 'dashboard',
         scanner: null,
         isScannerRunning: false,
-        scanCooldown: false,
         lastScannedBarcode: '',
+        lastScannedTime: 0,
         lastTransaction: null,
         tempSubtotal: 0,
         tempDiscount: 0,
@@ -226,6 +226,67 @@ const app = {
         }
     },
 
+    updateCartItemVal: function(barcode, field, el) {
+        const item = this.state.cart.find(x => compareBarcode(x.Barcode_ID, barcode));
+        if (item) {
+            const val = parseInt(el.value) || 0;
+            if (field === 'price') {
+                item.editPrice = val;
+            } else if (field === 'qty') {
+                const p = this.state.products.find(x => compareBarcode(x.Barcode_ID, barcode));
+                const maxStok = parseInt(p.Stok) || 0;
+                if (val > maxStok) {
+                    Swal.fire('Stok Terbatas', `Maksimal ${maxStok}`, 'warning');
+                    el.value = maxStok;
+                    item.qty = maxStok;
+                } else {
+                    item.qty = val;
+                }
+            }
+            
+            // Hitung ulang total tanpa rebuild list DOM
+            let subtotal = 0;
+            let count = 0;
+            this.state.cart.forEach(i => {
+                subtotal += i.editPrice * i.qty;
+                count += i.qty;
+            });
+            
+            // Update subtotal per baris
+            const rowTotalEl = el.closest('.cart-item').querySelector('.item-header span:last-child');
+            if (rowTotalEl) rowTotalEl.textContent = formatRupiah(item.editPrice * item.qty);
+            
+            // Hitung Diskon
+            const dType = document.getElementById('discountType').value;
+            const dVal = parseInt(document.getElementById('discountValue').value) || 0;
+            let discountAmount = 0;
+            if (dType === 'nominal') discountAmount = dVal;
+            if (dType === 'percent') discountAmount = subtotal * (dVal / 100);
+            const grandTotal = Math.max(0, subtotal - discountAmount);
+            
+            document.getElementById('itemCount').textContent = `${count} item`;
+            document.getElementById('subtotalPrice').textContent = formatRupiah(subtotal);
+            document.getElementById('totalPrice').textContent = formatRupiah(grandTotal);
+            
+            this.state.tempSubtotal = subtotal;
+            this.state.tempDiscount = discountAmount;
+            this.state.tempTotal = grandTotal;
+            this.saveData();
+        }
+    },
+
+    cleanCartItemInput: function(barcode, field, el) {
+        const item = this.state.cart.find(x => compareBarcode(x.Barcode_ID, barcode));
+        if (item) {
+            if (field === 'qty') {
+                const val = parseInt(el.value) || 0;
+                if (val <= 0) {
+                    this.removeCartItem(barcode);
+                }
+            }
+        }
+    },
+
     removeCartItem: function(barcode) {
         this.state.cart = this.state.cart.filter(x => !compareBarcode(x.Barcode_ID, barcode));
         this.updateCartUI();
@@ -260,11 +321,11 @@ const app = {
                     </div>
                     <div class="item-editor">
                         <label>Rp</label>
-                        <input type="number" value="${item.editPrice}" onchange="app.updateCartItem('${item.Barcode_ID}', 'price', this.value)">
+                        <input type="number" value="${item.editPrice}" oninput="app.updateCartItemVal('${item.Barcode_ID}', 'price', this)" onblur="app.cleanCartItemInput('${item.Barcode_ID}', 'price', this)">
                         <label>x</label>
                         <div class="qty-controls">
                             <button class="qty-btn" onclick="app.updateCartItem('${item.Barcode_ID}', 'qty', ${item.qty - 1})">-</button>
-                            <input type="number" class="qty-input" value="${item.qty}" onchange="app.updateCartItem('${item.Barcode_ID}', 'qty', this.value)">
+                            <input type="number" class="qty-input" value="${item.qty}" oninput="app.updateCartItemVal('${item.Barcode_ID}', 'qty', this)" onblur="app.cleanCartItemInput('${item.Barcode_ID}', 'qty', this)">
                             <button class="qty-btn" onclick="app.updateCartItem('${item.Barcode_ID}', 'qty', ${item.qty + 1})">+</button>
                             <button class="qty-btn del" onclick="app.removeCartItem('${item.Barcode_ID}')"><i class="fas fa-trash"></i></button>
                         </div>
@@ -807,8 +868,8 @@ const app = {
     startScanner: function() {
         document.getElementById('reader').classList.remove('hidden');
         this.state.scanner = new Html5Qrcode("reader");
-        this.state.scanCooldown = false;
         this.state.lastScannedBarcode = '';
+        this.state.lastScannedTime = 0;
         
         const readerEl = document.getElementById('reader');
         const readerWidth = readerEl.clientWidth || 300;
@@ -829,14 +890,20 @@ const app = {
             ]
         };
         
-        // Callback scan berhasil — Kamera tetap membaca (tanpa pause), dengan cooldown 1.5 detik
+        // Callback scan berhasil — Kamera tetap membaca (tanpa pause)
         const onScanSuccess = (text) => {
-            // Cegah scan duplikat dalam jeda waktu singkat
-            if (this.state.scanCooldown) return;
-            this.state.scanCooldown = true;
-            this.state.lastScannedBarcode = text;
+            const now = Date.now();
             
-            if ("vibrate" in navigator) navigator.vibrate([100, 50, 100]);
+            // Cooldown 1.5 detik HANYA jika menscan barcode yang SAMA berturut-turut.
+            // Barcode BERBEDA bisa discan secara instan tanpa delay/pause.
+            if (text === this.state.lastScannedBarcode && (now - this.state.lastScannedTime < 1500)) {
+                return;
+            }
+            
+            this.state.lastScannedBarcode = text;
+            this.state.lastScannedTime = now;
+            
+            if ("vibrate" in navigator) navigator.vibrate(80);
             
             const p = this.state.products.find(x => compareBarcode(x.Barcode_ID, text));
             if(p) {
@@ -851,11 +918,6 @@ const app = {
                     timer: 2000
                 });
             }
-            
-            // Lepas cooldown setelah 1.5 detik, scanner siap baca barcode lagi
-            setTimeout(() => {
-                this.state.scanCooldown = false;
-            }, 1500);
         };
         
         // Coba kamera belakang dahulu (autofokus HP)
@@ -890,7 +952,34 @@ const app = {
 
     // --- Utilities ---
     initServiceWorker: function() {
-        if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('sw.js').then(reg => {
+                reg.onupdatefound = () => {
+                    const installingWorker = reg.installing;
+                    if (installingWorker) {
+                        installingWorker.onstatechange = () => {
+                            if (installingWorker.state === 'installed') {
+                                if (navigator.serviceWorker.controller) {
+                                    // Ada service worker lama yang sedang mengontrol, ini artinya ada update baru!
+                                    Swal.fire({
+                                        title: 'Update Aplikasi',
+                                        text: 'Versi aplikasi baru tersedia. Muat ulang sekarang untuk menerapkan pembaruan?',
+                                        icon: 'info',
+                                        showCancelButton: true,
+                                        confirmButtonText: 'Muat Ulang',
+                                        cancelButtonText: 'Nanti'
+                                    }).then((result) => {
+                                        if (result.isConfirmed) {
+                                            window.location.reload();
+                                        }
+                                    });
+                                }
+                            }
+                        };
+                    }
+                };
+            }).catch(err => console.log('Gagal registrasi SW:', err));
+        }
     },
     setupNetworkListeners: function() {
         window.addEventListener('online', () => {
