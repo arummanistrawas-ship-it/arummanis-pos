@@ -1,4 +1,4 @@
-const CACHE_NAME = 'arummanis-pos-v3';
+const CACHE_NAME = 'arummanis-pos-v4';
 const ASSETS_TO_CACHE = [
     './',
     './index.html',
@@ -12,6 +12,7 @@ const ASSETS_TO_CACHE = [
 ];
 
 self.addEventListener('install', event => {
+    self.skipWaiting(); // Memaksa service worker baru langsung aktif setelah diinstall
     event.waitUntil(
         caches.open(CACHE_NAME)
             .then(cache => {
@@ -27,7 +28,7 @@ self.addEventListener('activate', event => {
                 keys.filter(key => key !== CACHE_NAME)
                     .map(key => caches.delete(key))
             );
-        })
+        }).then(() => self.clients.claim()) // Langsung mengontrol halaman tanpa menunggu reload halaman
     );
 });
 
@@ -37,19 +38,22 @@ self.addEventListener('fetch', event => {
         return;
     }
 
+    // Strategi: Network-First (Coba ambil dari internet dulu agar update langsung terasa, fallback ke cache jika offline)
     event.respondWith(
-        caches.match(event.request)
-            .then(response => {
-                // Return cache jika ada, jika tidak, fetch ke jaringan
-                return response || fetch(event.request).then(fetchRes => {
-                    return caches.open(CACHE_NAME).then(cache => {
-                        // Hanya cache request GET (mencegah error pada chrome extension/post)
-                        if (event.request.method === 'GET' && event.request.url.startsWith('http')) {
-                            cache.put(event.request.url, fetchRes.clone());
-                        }
-                        return fetchRes;
+        fetch(event.request)
+            .then(networkResponse => {
+                // Simpan ke cache jika request GET, sukses, dan protokol HTTP/HTTPS
+                if (event.request.method === 'GET' && event.request.url.startsWith('http') && networkResponse.status === 200) {
+                    const responseClone = networkResponse.clone();
+                    caches.open(CACHE_NAME).then(cache => {
+                        cache.put(event.request, responseClone);
                     });
-                });
+                }
+                return networkResponse;
+            })
+            .catch(() => {
+                // Jika gagal koneksi (offline), ambil dari cache
+                return caches.match(event.request);
             })
     );
 });

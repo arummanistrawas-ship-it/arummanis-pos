@@ -598,19 +598,21 @@ const app = {
                 const backCamera = devices.find(d => d.label.toLowerCase().includes('back') || d.label.toLowerCase().includes('belakang'));
                 if (backCamera) cameraId = backCamera.id;
                 
+                const formats = window.Html5QrcodeSupportedFormats ? [ 
+                    Html5QrcodeSupportedFormats.QR_CODE, 
+                    Html5QrcodeSupportedFormats.EAN_13, 
+                    Html5QrcodeSupportedFormats.EAN_8, 
+                    Html5QrcodeSupportedFormats.UPC_A, 
+                    Html5QrcodeSupportedFormats.CODE_128, 
+                    Html5QrcodeSupportedFormats.CODE_39, 
+                    Html5QrcodeSupportedFormats.CODE_93 
+                ] : [];
+                
                 const config = { 
                     fps: 15, 
                     qrbox: { width: 250, height: 250 },
                     aspectRatio: 1.0,
-                    formatsToSupport: [ 
-                        Html5QrcodeSupportedFormats.QR_CODE, 
-                        Html5QrcodeSupportedFormats.EAN_13, 
-                        Html5QrcodeSupportedFormats.EAN_8, 
-                        Html5QrcodeSupportedFormats.UPC_A, 
-                        Html5QrcodeSupportedFormats.CODE_128, 
-                        Html5QrcodeSupportedFormats.CODE_39, 
-                        Html5QrcodeSupportedFormats.CODE_93 
-                    ]
+                    formatsToSupport: formats
                 };
                 
                 this.state.productScanner.start(cameraId, config, 
@@ -712,19 +714,21 @@ const app = {
                 const backCamera = devices.find(d => d.label.toLowerCase().includes('back') || d.label.toLowerCase().includes('belakang'));
                 if (backCamera) cameraId = backCamera.id;
                 
+                const formats = window.Html5QrcodeSupportedFormats ? [ 
+                    Html5QrcodeSupportedFormats.QR_CODE, 
+                    Html5QrcodeSupportedFormats.EAN_13, 
+                    Html5QrcodeSupportedFormats.EAN_8, 
+                    Html5QrcodeSupportedFormats.UPC_A, 
+                    Html5QrcodeSupportedFormats.CODE_128, 
+                    Html5QrcodeSupportedFormats.CODE_39, 
+                    Html5QrcodeSupportedFormats.CODE_93 
+                ] : [];
+                
                 const config = { 
                     fps: 15, 
                     qrbox: { width: 250, height: 250 },
                     aspectRatio: 1.0,
-                    formatsToSupport: [ 
-                        Html5QrcodeSupportedFormats.QR_CODE, 
-                        Html5QrcodeSupportedFormats.EAN_13, 
-                        Html5QrcodeSupportedFormats.EAN_8, 
-                        Html5QrcodeSupportedFormats.UPC_A, 
-                        Html5QrcodeSupportedFormats.CODE_128, 
-                        Html5QrcodeSupportedFormats.CODE_39, 
-                        Html5QrcodeSupportedFormats.CODE_93 
-                    ]
+                    formatsToSupport: formats
                 };
                 
                 this.state.scanner.start(cameraId, config, 
