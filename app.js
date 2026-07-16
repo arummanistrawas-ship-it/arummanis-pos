@@ -716,17 +716,7 @@ const app = {
         const boxSize = Math.floor(Math.min(readerWidth * 0.8, 280));
         const config = { 
             fps: 15, 
-            qrbox: { width: boxSize, height: boxSize },
-            formatsToSupport: [
-                Html5QrcodeSupportedFormats.QR_CODE,
-                Html5QrcodeSupportedFormats.EAN_13,
-                Html5QrcodeSupportedFormats.EAN_8,
-                Html5QrcodeSupportedFormats.CODE_128,
-                Html5QrcodeSupportedFormats.CODE_39,
-                Html5QrcodeSupportedFormats.UPC_A,
-                Html5QrcodeSupportedFormats.UPC_E,
-                Html5QrcodeSupportedFormats.ITF
-            ]
+            qrbox: { width: boxSize, height: boxSize }
         };
         
         const onScanSuccess = (text) => {
@@ -856,17 +846,7 @@ const app = {
         // Kotak scan berbentuk square sesuai permintaan user
         const config = { 
             fps: 15,
-            qrbox: { width: boxSize, height: boxSize },
-            formatsToSupport: [
-                Html5QrcodeSupportedFormats.QR_CODE,
-                Html5QrcodeSupportedFormats.EAN_13,
-                Html5QrcodeSupportedFormats.EAN_8,
-                Html5QrcodeSupportedFormats.CODE_128,
-                Html5QrcodeSupportedFormats.CODE_39,
-                Html5QrcodeSupportedFormats.UPC_A,
-                Html5QrcodeSupportedFormats.UPC_E,
-                Html5QrcodeSupportedFormats.ITF
-            ]
+            qrbox: { width: boxSize, height: boxSize }
         };
         
         // Callback scan berhasil — Kamera tetap membaca (tanpa pause)

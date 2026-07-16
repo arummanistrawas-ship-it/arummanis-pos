@@ -4,6 +4,29 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Arummanis POS v7 (Scanner Fast)</title>
+    <script>
+        // Reset cache PWA jika ada parameter ?clear=1 di URL
+        if (window.location.search.includes('clear=1')) {
+            if ('serviceWorker' in navigator) {
+                navigator.serviceWorker.getRegistrations().then(registrations => {
+                    for (let registration of registrations) {
+                        registration.unregister();
+                    }
+                });
+            }
+            if ('caches' in window) {
+                caches.keys().then(names => {
+                    for (let name of names) {
+                        caches.delete(name);
+                    }
+                });
+            }
+            localStorage.clear();
+            sessionStorage.clear();
+            // Hapus parameter search dan reload ke origin
+            window.location.href = window.location.origin + window.location.pathname;
+        }
+    </script>
     <link rel="stylesheet" href="style.css">
     <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#FF6B6B">
@@ -59,6 +82,8 @@
                 </div>
                 <div class="version-info" style="text-align: center; color: #888; font-size: 0.8rem; margin-top: 2.5rem; padding: 10px; border-top: 1px dashed #eee;">
                     <i class="fas fa-code-branch"></i> Versi Aplikasi: 7.0 (Terbaru - Scanner Fast)
+                    <br>
+                    <a href="?clear=1" style="color: #FF6B6B; text-decoration: underline; display: inline-block; margin-top: 5px;"><i class="fas fa-sync-alt"></i> Reset Aplikasi & Bersihkan Cache</a>
                 </div>
             </section>
 
