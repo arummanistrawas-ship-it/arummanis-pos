@@ -1,0 +1,21 @@
+{
+  "name": "Arummanis POS",
+  "short_name": "Arummanis",
+  "description": "Offline-first Point of Sale untuk Arummanis",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#F7FFF7",
+  "theme_color": "#FF6B6B",
+  "icons": [
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/1046/1046774.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/1046/1046774.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
