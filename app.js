@@ -521,6 +521,8 @@ const app = {
 
     showProductForm: function(barcode = null) {
         document.getElementById('productFormOverlay').classList.remove('hidden');
+        const batchFields = document.getElementById('prodFormBatchFields');
+        
         if (barcode && typeof barcode === 'string') {
             const p = this.state.products.find(x => x.Barcode_ID === barcode);
             document.getElementById('productFormTitle').textContent = 'Edit Produk';
@@ -529,6 +531,9 @@ const app = {
             document.getElementById('prodFormName').value = p.Nama_Camilan;
             document.getElementById('prodFormPrice').value = p.Harga;
             document.getElementById('prodFormStock').value = p.Stok;
+            
+            // Sembunyikan field batch saat edit (stok batch diatur via restock di Sheets)
+            batchFields.classList.add('hidden');
         } else {
             document.getElementById('productFormTitle').textContent = 'Tambah Produk';
             document.getElementById('prodFormId').value = '';
@@ -536,6 +541,11 @@ const app = {
             document.getElementById('prodFormName').value = '';
             document.getElementById('prodFormPrice').value = '';
             document.getElementById('prodFormStock').value = '';
+            
+            // Tampilkan field batch saat produk baru
+            batchFields.classList.remove('hidden');
+            document.getElementById('prodFormPriceBuy').value = '';
+            document.getElementById('prodFormExpired').value = '';
         }
     },
     closeProductForm: function() {
@@ -549,9 +559,31 @@ const app = {
         const price = parseInt(document.getElementById('prodFormPrice').value) || 0;
         const stock = parseInt(document.getElementById('prodFormStock').value) || 0;
         
+        const priceBuy = parseInt(document.getElementById('prodFormPriceBuy').value) || 0;
+        const expired = document.getElementById('prodFormExpired').value.trim();
+        
         if(!newBarcode || !name) return Swal.fire('Error', 'Lengkapi form (Barcode dan Nama)!', 'error');
 
-        const product = { Barcode_ID: newBarcode, Nama_Camilan: name, Harga: price, Stok: stock, Status: stock > 0 ? 'Ready' : 'Habis' };
+        // Validasi input batch jika produk baru dengan stok > 0
+        if (!oldId && stock > 0) {
+            const dateRegex = /^\d{2}\/\d{2}\/\d{4}$/;
+            if (!expired || !dateRegex.test(expired)) {
+                return Swal.fire('Error', 'Format Tanggal Expired wajib DD/MM/YYYY! (Cth: 31/12/2026)', 'error');
+            }
+            if (!priceBuy) {
+                return Swal.fire('Error', 'Harga Beli/Modal wajib diisi!', 'error');
+            }
+        }
+
+        const product = { 
+            Barcode_ID: newBarcode, 
+            Nama_Camilan: name, 
+            Harga: price, 
+            Stok: stock, 
+            Status: stock > 0 ? 'Ready' : 'Habis',
+            Harga_Beli: priceBuy,
+            Tanggal_Expired: expired
+        };
 
         if (oldId) {
             // Jika ganti barcode, pastikan barcode baru belum dipakai produk lain

@@ -212,6 +212,17 @@
                         <label>Stok Tersedia</label>
                         <input type="number" id="prodFormStock" class="input-full" required>
                     </div>
+                    <!-- Field khusus untuk input batch awal saat pendaftaran produk baru -->
+                    <div id="prodFormBatchFields">
+                        <div class="form-group">
+                            <label>Harga Beli / Modal (Rp)</label>
+                            <input type="number" id="prodFormPriceBuy" class="input-full" placeholder="Cth: 12000">
+                        </div>
+                        <div class="form-group">
+                            <label>Tanggal Expired (DD/MM/YYYY)</label>
+                            <input type="text" id="prodFormExpired" class="input-full" placeholder="Cth: 31/12/2026">
+                        </div>
+                    </div>
                     <div class="action-buttons mt-1">
                         <button onclick="app.closeProductForm()" class="btn btn-secondary">Batal</button>
                         <button id="saveProdFormBtn" class="btn btn-success">Simpan</button>
