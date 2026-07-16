@@ -25,7 +25,18 @@ const app = {
         this.setupNetworkListeners();
         await this.loadData();
         this.bindEvents();
-        this.navigate('dashboard');
+        
+        // Inisialisasi awal history state untuk navigasi HP
+        history.replaceState({ view: 'dashboard' }, '', '#dashboard');
+        window.addEventListener('popstate', (event) => {
+            if (event.state && event.state.view) {
+                this.navigate(event.state.view, false);
+            } else {
+                this.navigate('dashboard', false);
+            }
+        });
+        
+        this.navigate('dashboard', false);
         
         // Dummy data jika kosong (hanya untuk testing lokal sebelum konek GAS)
         if (this.state.products.length === 0 && GAS_URL === 'YOUR_GOOGLE_APPS_SCRIPT_WEB_APP_URL') {
@@ -39,7 +50,7 @@ const app = {
     },
 
     // --- Core & Navigation ---
-    navigate: function(viewId) {
+    navigate: function(viewId, pushHistory = true) {
         document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
         document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
         
@@ -51,6 +62,11 @@ const app = {
         }
         
         this.state.currentView = viewId;
+        
+        // Catat di history browser jika navigasi maju
+        if (pushHistory) {
+            history.pushState({ view: viewId }, '', '#' + viewId);
+        }
         
         // UI Updates based on view
         const titleEl = document.getElementById('pageTitle');
