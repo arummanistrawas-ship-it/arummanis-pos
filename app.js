@@ -594,17 +594,12 @@ const app = {
         
         const config = { 
             fps: 10, 
-            qrbox: { width: 250, height: 250 }
+            qrbox: 250,
+            useBarCodeDetectorIfSupported: true
         };
         
-        const constraints = {
-            facingMode: "environment",
-            width: { ideal: 1280 },
-            height: { ideal: 720 }
-        };
-        
-        // Coba kamera belakang dahulu (untuk HP agar mendapat lensa autofocus dan resolusi HD)
-        this.state.productScanner.start(constraints, config, 
+        // Coba kamera belakang dahulu (untuk HP agar mendapat lensa autofocus)
+        this.state.productScanner.start({ facingMode: "environment" }, config, 
             (text) => {
                 if ("vibrate" in navigator) navigator.vibrate(100);
                 document.getElementById('prodFormBarcode').value = text;
@@ -615,20 +610,12 @@ const app = {
             btn.classList.replace('btn-secondary', 'btn-danger');
             btn.innerHTML = '<i class="fas fa-times"></i>';
         }).catch(err => {
-            const fallbackConstraints = {
-                facingMode: "user",
-                width: { ideal: 1280 },
-                height: { ideal: 720 }
-            };
             // Fallback ke kamera depan (untuk laptop/PC)
-            this.state.productScanner.start(fallbackConstraints, config,
-                (text) => {
-                    if ("vibrate" in navigator) navigator.vibrate(100);
-                    document.getElementById('prodFormBarcode').value = text;
-                    this.stopProductScanner();
-                },
-                (err) => {}
-            ).then(() => {
+            this.state.productScanner.start({ facingMode: "user" }, config, (text) => {
+                if ("vibrate" in navigator) navigator.vibrate(100);
+                document.getElementById('prodFormBarcode').value = text;
+                this.stopProductScanner();
+            }, (err) => {}).then(() => {
                 btn.classList.replace('btn-secondary', 'btn-danger');
                 btn.innerHTML = '<i class="fas fa-times"></i>';
             }).catch(e => {
@@ -709,17 +696,12 @@ const app = {
         
         const config = { 
             fps: 10, 
-            qrbox: { width: 250, height: 250 }
+            qrbox: 250,
+            useBarCodeDetectorIfSupported: true
         };
         
-        const constraints = {
-            facingMode: "environment",
-            width: { ideal: 1280 },
-            height: { ideal: 720 }
-        };
-        
-        // Coba kamera belakang dahulu (autofokus HP dan resolusi HD)
-        this.state.scanner.start(constraints, config, 
+        // Coba kamera belakang dahulu (autofokus HP)
+        this.state.scanner.start({ facingMode: "environment" }, config, 
             (text) => {
                 if ("vibrate" in navigator) navigator.vibrate(100);
                 const p = this.state.products.find(x => x.Barcode_ID === text);
@@ -734,23 +716,15 @@ const app = {
             document.getElementById('cameraBtnText').textContent = 'Tutup';
             document.getElementById('toggleCameraBtn').classList.replace('btn-primary', 'btn-danger');
         }).catch(err => {
-            const fallbackConstraints = {
-                facingMode: "user",
-                width: { ideal: 1280 },
-                height: { ideal: 720 }
-            };
             // Fallback ke kamera depan (laptop/PC)
-            this.state.scanner.start(fallbackConstraints, config,
-                (text) => {
-                    if ("vibrate" in navigator) navigator.vibrate(100);
-                    const p = this.state.products.find(x => x.Barcode_ID === text);
-                    if(p) this.addToCart(p);
-                    else Swal.fire('Error', 'Barcode tidak ditemukan', 'error');
-                    
-                    this.stopScanner();
-                },
-                (err) => {}
-            ).then(() => {
+            this.state.scanner.start({ facingMode: "user" }, config, (text) => {
+                if ("vibrate" in navigator) navigator.vibrate(100);
+                const p = this.state.products.find(x => x.Barcode_ID === text);
+                if(p) this.addToCart(p);
+                else Swal.fire('Error', 'Barcode tidak ditemukan', 'error');
+                
+                this.stopScanner();
+            }, (err) => {}).then(() => {
                 this.state.isScannerRunning = true;
                 document.getElementById('cameraBtnText').textContent = 'Tutup';
                 document.getElementById('toggleCameraBtn').classList.replace('btn-primary', 'btn-danger');
