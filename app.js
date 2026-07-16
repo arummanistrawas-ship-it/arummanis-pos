@@ -599,10 +599,8 @@ const app = {
                 if (backCamera) cameraId = backCamera.id;
                 
                 const config = { 
-                    fps: 15, 
-                    qrbox: { width: 300, height: 150 },
-                    formatsToSupport: [ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 14, 15 ], // Supports all formats explicitly (ZXing enum)
-                    experimentalFeatures: { useBarCodeDetectorIfSupported: true }
+                    fps: 10, 
+                    qrbox: { width: 250, height: 100 }
                 };
                 
                 this.state.productScanner.start(cameraId, config, 
@@ -705,10 +703,8 @@ const app = {
                 if (backCamera) cameraId = backCamera.id;
                 
                 const config = { 
-                    fps: 15, 
-                    qrbox: { width: 300, height: 150 },
-                    formatsToSupport: [ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 14, 15 ],
-                    experimentalFeatures: { useBarCodeDetectorIfSupported: true }
+                    fps: 10, 
+                    qrbox: { width: 250, height: 100 }
                 };
                 
                 this.state.scanner.start(cameraId, config, 
