@@ -636,7 +636,7 @@ const app = {
             fps: 10, 
             qrbox: (w, h) => {
                 const min = Math.min(w, h);
-                const size = Math.floor(min * 0.6);
+                const size = Math.floor(min * 0.75);
                 return { width: size, height: size };
             },
             useBarCodeDetectorIfSupported: true
@@ -742,7 +742,7 @@ const app = {
             fps: 10, 
             qrbox: (w, h) => {
                 const min = Math.min(w, h);
-                const size = Math.floor(min * 0.6);
+                const size = Math.floor(min * 0.75);
                 return { width: size, height: size };
             },
             useBarCodeDetectorIfSupported: true
