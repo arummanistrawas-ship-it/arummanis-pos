@@ -94,9 +94,9 @@ const app = {
             backBtn.classList.remove('hidden');
             if(viewId === 'pos') { titleEl.textContent = 'Transaksi Baru'; this.updateCartUI(); }
             if(viewId === 'checkout') titleEl.textContent = 'Pembayaran';
-            if(viewId === 'receipt') { titleEl.textContent = 'Struk Transaksi'; backBtn.classList.add('hidden'); } // Sembunyikan back di receipt agar dipaksa pakai tombol yang ada
-            if(viewId === 'history') { titleEl.textContent = 'Histori Transaksi'; this.renderTransactionList('all'); }
-            if(viewId === 'debt') { titleEl.textContent = 'Belum Lunas (Kasbon)'; this.renderTransactionList('Kasbon'); }
+            if(viewId === 'receipt') { titleEl.textContent = 'Struk Transaksi'; backBtn.classList.add('hidden'); }
+            if(viewId === 'history') { titleEl.textContent = 'Histori Transaksi'; this.renderTransactionList('all', 'transactionListContainer', 'searchTransaction'); }
+            if(viewId === 'debt') { titleEl.textContent = 'Belum Lunas (Kasbon)'; this.renderTransactionList('Kasbon', 'debtListContainer', 'searchDebt'); }
             if(viewId === 'products') { titleEl.textContent = 'Manajemen Produk'; this.renderProductList(); }
         }
     },
@@ -120,6 +120,8 @@ const app = {
             } catch (error) {
                 console.error('Gagal memuat produk dari Sheets:', error);
             }
+            // Sinkronisasi antrean offline yang tertunda setelah konek kembali
+            this.syncData();
         }
     },
     saveData: function() {
@@ -453,11 +455,16 @@ const app = {
     },
 
     // --- History & Debt ---
-    renderTransactionList: function(filter) {
-        const container = document.getElementById('transactionListContainer');
+    renderTransactionList: function(filter, containerId, searchId) {
+        // Default container IDs untuk backward compatibility
+        const cId = containerId || 'transactionListContainer';
+        const sId = searchId || 'searchTransaction';
+        const container = document.getElementById(cId);
+        if (!container) return;
         container.innerHTML = '';
         
-        const term = document.getElementById('searchTransaction').value.toLowerCase();
+        const searchEl = document.getElementById(sId);
+        const term = searchEl ? searchEl.value.toLowerCase() : '';
         
         let filtered = this.state.transactions.filter(t => {
             if (filter === 'Kasbon' && t.status !== 'Belum Lunas') return false;
@@ -466,7 +473,7 @@ const app = {
         });
 
         if(filtered.length === 0) {
-            container.innerHTML = `<div class="text-center mt-1">Tidak ada transaksi ditemukan.</div>`;
+            container.innerHTML = `<div class="text-center mt-1">${filter === 'Kasbon' ? 'Tidak ada kasbon aktif.' : 'Tidak ada transaksi ditemukan.'}</div>`;
             return;
         }
 
@@ -490,7 +497,7 @@ const app = {
         });
         
         // Setup filter typing listener
-        document.getElementById('searchTransaction').oninput = () => this.renderTransactionList(filter);
+        if (searchEl) searchEl.oninput = () => this.renderTransactionList(filter, cId, sId);
     },
 
     markAsPaid: function(id) {
@@ -663,36 +670,33 @@ const app = {
         reader.classList.remove('hidden');
         this.state.productScanner = new Html5Qrcode("productScannerReader");
         
-        const minSide = Math.min(reader.clientWidth || 300, window.innerHeight || 600);
-        const boxSize = Math.floor(minSide * 0.75);
+        const readerWidth = reader.clientWidth || 320;
+        // Rectangular qrbox untuk deteksi barcode 1D yang lebih baik
         const config = { 
-            fps: 10, 
-            qrbox: { width: boxSize, height: boxSize },
-            useBarCodeDetectorIfSupported: true
+            fps: 25, 
+            qrbox: { width: Math.floor(readerWidth * 0.88), height: 120 }
+            // Tidak pakai useBarCodeDetectorIfSupported — ZXing lebih lengkap untuk barcode 1D
+        };
+        
+        const onScanSuccess = (text) => {
+            if ("vibrate" in navigator) navigator.vibrate(80);
+            document.getElementById('prodFormBarcode').value = text;
+            this.stopProductScanner();
         };
         
         // Coba kamera belakang dahulu (untuk HP agar mendapat lensa autofocus)
-        this.state.productScanner.start({ facingMode: "environment" }, config, 
-            (text) => {
-                if ("vibrate" in navigator) navigator.vibrate(100);
-                document.getElementById('prodFormBarcode').value = text;
-                this.stopProductScanner();
-            }, 
-            (err) => {}
-        ).then(() => {
+        this.state.productScanner.start({ facingMode: "environment" }, config, onScanSuccess, (err) => {})
+        .then(() => {
             btn.classList.replace('btn-secondary', 'btn-danger');
             btn.innerHTML = '<i class="fas fa-times"></i>';
         }).catch(err => {
             // Fallback ke kamera depan (untuk laptop/PC)
-            this.state.productScanner.start({ facingMode: "user" }, config, (text) => {
-                if ("vibrate" in navigator) navigator.vibrate(100);
-                document.getElementById('prodFormBarcode').value = text;
-                this.stopProductScanner();
-            }, (err) => {}).then(() => {
+            this.state.productScanner.start({ facingMode: "user" }, config, onScanSuccess, (err) => {})
+            .then(() => {
                 btn.classList.replace('btn-secondary', 'btn-danger');
                 btn.innerHTML = '<i class="fas fa-times"></i>';
             }).catch(e => {
-                Swal.fire('Error', 'Gagal menyalakan kamera.', 'error');
+                Swal.fire('Error', 'Gagal menyalakan kamera. Pastikan izin kamera sudah diberikan.', 'error');
                 reader.classList.add('hidden');
             });
         });
@@ -768,44 +772,42 @@ const app = {
         this.state.scanner = new Html5Qrcode("reader");
         
         const readerEl = document.getElementById('reader');
-        const minSide = Math.min(readerEl.clientWidth || 300, window.innerHeight || 600);
-        const boxSize = Math.floor(minSide * 0.75);
+        const readerWidth = readerEl.clientWidth || 320;
+        // Kotak scan berbentuk persegi panjang horizontal — optimal untuk barcode 1D
         const config = { 
-            fps: 10, 
-            qrbox: { width: boxSize, height: boxSize },
-            useBarCodeDetectorIfSupported: true
+            fps: 25,
+            qrbox: { width: Math.floor(readerWidth * 0.88), height: 120 }
+            // Sengaja tidak pakai useBarCodeDetectorIfSupported agar ZXing digunakan
+            // (BarcodeDetector bawaan Chrome Android tidak support EAN-13 / Code-128)
+        };
+        
+        // Callback scan berhasil — TIDAK menghentikan kamera agar bisa scan terus-menerus
+        const onScanSuccess = (text) => {
+            if ("vibrate" in navigator) navigator.vibrate(80);
+            const p = this.state.products.find(x => compareBarcode(x.Barcode_ID, text));
+            if(p) {
+                this.addToCart(p);
+                // Kamera TETAP menyala untuk scan produk berikutnya
+            } else {
+                Swal.fire({ toast: true, position: 'top-end', icon: 'warning', title: `Barcode "${text}" tidak ada di database`, showConfirmButton: false, timer: 2500 });
+            }
         };
         
         // Coba kamera belakang dahulu (autofokus HP)
-        this.state.scanner.start({ facingMode: "environment" }, config, 
-            (text) => {
-                if ("vibrate" in navigator) navigator.vibrate(100);
-                const p = this.state.products.find(x => compareBarcode(x.Barcode_ID, text));
-                if(p) this.addToCart(p);
-                else Swal.fire('Error', 'Barcode tidak ditemukan', 'error');
-                
-                this.stopScanner();
-            }, 
-            (err) => {}
-        ).then(() => {
+        this.state.scanner.start({ facingMode: "environment" }, config, onScanSuccess, (err) => {})
+        .then(() => {
             this.state.isScannerRunning = true;
             document.getElementById('cameraBtnText').textContent = 'Tutup';
             document.getElementById('toggleCameraBtn').classList.replace('btn-primary', 'btn-danger');
         }).catch(err => {
             // Fallback ke kamera depan (laptop/PC)
-            this.state.scanner.start({ facingMode: "user" }, config, (text) => {
-                if ("vibrate" in navigator) navigator.vibrate(100);
-                const p = this.state.products.find(x => compareBarcode(x.Barcode_ID, text));
-                if(p) this.addToCart(p);
-                else Swal.fire('Error', 'Barcode tidak ditemukan', 'error');
-                
-                this.stopScanner();
-            }, (err) => {}).then(() => {
+            this.state.scanner.start({ facingMode: "user" }, config, onScanSuccess, (err) => {})
+            .then(() => {
                 this.state.isScannerRunning = true;
                 document.getElementById('cameraBtnText').textContent = 'Tutup';
                 document.getElementById('toggleCameraBtn').classList.replace('btn-primary', 'btn-danger');
             }).catch(e => {
-                Swal.fire('Error', 'Gagal menyalakan kamera.', 'error');
+                Swal.fire('Error', 'Gagal menyalakan kamera. Pastikan izin kamera sudah diberikan.', 'error');
                 document.getElementById('reader').classList.add('hidden');
             });
         });
@@ -835,6 +837,36 @@ const app = {
             document.querySelector('.status-dot').className = 'status-dot offline';
             document.getElementById('statusText').textContent = 'Offline';
         });
+    },
+
+    shareReceipt: function() {
+        const trx = this.state.lastTransaction;
+        if (!trx) return;
+        
+        let text = `🍬 *ARUMMANIS* - Struk Transaksi\n`;
+        text += `━━━━━━━━━━━━━━━━━━━━\n`;
+        text += `No   : ${trx.id}\n`;
+        text += `Tgl  : ${new Date(trx.timestamp).toLocaleString('id-ID')}\n`;
+        text += `Pel  : ${trx.customer}\n`;
+        text += `━━━━━━━━━━━━━━━━━━━━\n`;
+        trx.items.forEach(i => {
+            text += `${i.Nama_Camilan}\n  ${i.qty} x ${formatRupiah(i.editPrice)} = ${formatRupiah(i.qty * i.editPrice)}\n`;
+        });
+        text += `━━━━━━━━━━━━━━━━━━━━\n`;
+        text += `Subtotal : ${formatRupiah(trx.subtotal)}\n`;
+        if (trx.discount > 0) text += `Diskon   : -${formatRupiah(trx.discount)}\n`;
+        text += `*TOTAL   : ${formatRupiah(trx.total)}*\n`;
+        text += `Bayar    : ${trx.method}\n`;
+        if (trx.method === 'Tunai') {
+            text += `Tunai    : ${formatRupiah(trx.cash)}\n`;
+            text += `Kembali  : ${formatRupiah(trx.change)}\n`;
+        }
+        if (trx.status === 'Belum Lunas') text += `⚠️ *STATUS: BELUM LUNAS (KASBON)*\n`;
+        text += `━━━━━━━━━━━━━━━━━━━━\n`;
+        text += `Terima kasih sudah berbelanja! 🙏`;
+        
+        const encoded = encodeURIComponent(text);
+        window.open(`https://wa.me/?text=${encoded}`, '_blank');
     },
 
     printReceipt: async function() {

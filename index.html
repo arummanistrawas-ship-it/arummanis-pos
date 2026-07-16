@@ -157,20 +157,33 @@
                     <!-- Injected by JS -->
                 </div>
                 <div class="action-buttons-col mt-1">
-                    <button id="printReceiptBtn" class="btn btn-primary btn-block btn-lg"><i class="fas fa-print"></i> Cetak Struk (Bluetooth)</button>
+                    <button id="shareWhatsAppBtn" onclick="app.shareReceipt()" class="btn btn-success btn-block btn-lg"><i class="fab fa-whatsapp"></i> Bagikan ke WhatsApp</button>
+                    <button id="printReceiptBtn" class="btn btn-primary btn-block"><i class="fas fa-print"></i> Cetak Struk (Bluetooth)</button>
                     <button id="editTransactionBtn" class="btn btn-warning btn-block"><i class="fas fa-edit"></i> Edit Ulang Transaksi</button>
-                    <button onclick="app.newTransaction()" class="btn btn-success btn-block"><i class="fas fa-plus"></i> Transaksi Baru</button>
-                    <button onclick="app.navigate('dashboard')" class="btn btn-secondary btn-block">Kembali ke Menu</button>
+                    <button onclick="app.newTransaction()" class="btn btn-secondary btn-block"><i class="fas fa-plus"></i> Transaksi Baru</button>
+                    <button onclick="app.navigate('dashboard')" class="btn btn-outline btn-block">Kembali ke Menu</button>
                 </div>
             </section>
 
-            <!-- 5. TRANSACTIONS LIST (HISTORY / DEBT) -->
-            <section id="view-list" class="view hidden">
+            <!-- 5a. HISTORY TRANSAKSI -->
+            <section id="view-history" class="view hidden">
                 <div class="card">
                     <div class="form-group">
                         <input type="text" id="searchTransaction" class="input-full" placeholder="Cari ID / Nama Pelanggan...">
                     </div>
                     <div class="transaction-list" id="transactionListContainer">
+                        <!-- Injected by JS -->
+                    </div>
+                </div>
+            </section>
+
+            <!-- 5b. KASBON (BELUM LUNAS) -->
+            <section id="view-debt" class="view hidden">
+                <div class="card">
+                    <div class="form-group">
+                        <input type="text" id="searchDebt" class="input-full" placeholder="Cari ID / Nama Pelanggan...">
+                    </div>
+                    <div class="transaction-list" id="debtListContainer">
                         <!-- Injected by JS -->
                     </div>
                 </div>
@@ -225,7 +238,7 @@
                     </div>
                     <div class="action-buttons mt-1">
                         <button onclick="app.closeProductForm()" class="btn btn-secondary">Batal</button>
-                        <button id="saveProdFormBtn" class="btn btn-success">Simpan</button>
+                        <button id="saveProdFormBtn" onclick="app.saveProduct()" class="btn btn-success">Simpan</button>
                     </div>
                 </div>
             </div>
