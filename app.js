@@ -186,17 +186,8 @@ const app = {
     },
 
     addToCart: function(product) {
-        if(product.Status === 'Habis' || parseInt(product.Stok) <= 0) {
-            Swal.fire('Stok Habis', `${product.Nama_Camilan} sedang kosong.`, 'warning');
-            return;
-        }
-
         const existing = this.state.cart.find(x => compareBarcode(x.Barcode_ID, product.Barcode_ID));
         if(existing) {
-            if(existing.qty >= parseInt(product.Stok)) {
-                Swal.fire('Stok Terbatas', `Hanya tersedia ${product.Stok} item`, 'warning');
-                return;
-            }
             existing.qty += 1;
         } else {
             this.state.cart.push({ ...product, qty: 1, editPrice: parseInt(product.Harga) });
@@ -210,11 +201,7 @@ const app = {
         if(item) {
             if(field === 'qty') {
                 const q = parseInt(value) || 1;
-                const p = this.state.products.find(x => compareBarcode(x.Barcode_ID, barcode));
-                if(q > parseInt(p.Stok)) {
-                    Swal.fire('Stok Terbatas', `Maksimal ${p.Stok}`, 'warning');
-                    item.qty = parseInt(p.Stok);
-                } else if (q <= 0) {
+                if (q <= 0) {
                     this.removeCartItem(barcode);
                     return;
                 } else {
@@ -233,15 +220,7 @@ const app = {
             if (field === 'price') {
                 item.editPrice = val;
             } else if (field === 'qty') {
-                const p = this.state.products.find(x => compareBarcode(x.Barcode_ID, barcode));
-                const maxStok = parseInt(p.Stok) || 0;
-                if (val > maxStok) {
-                    Swal.fire('Stok Terbatas', `Maksimal ${maxStok}`, 'warning');
-                    el.value = maxStok;
-                    item.qty = maxStok;
-                } else {
-                    item.qty = val;
-                }
+                item.qty = val;
             }
             
             // Hitung ulang total tanpa rebuild list DOM
