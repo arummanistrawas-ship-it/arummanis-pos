@@ -65,8 +65,8 @@ function getProducts() {
   var pSheet = ss.getSheetByName("DatabaseProduk");
   var bSheet = ss.getSheetByName("StokBatch");
   
-  var pData = pSheet.getDataRange().getValues();
-  var bData = bSheet.getDataRange().getValues();
+  var pData = pSheet.getDataRange().getDisplayValues();
+  var bData = bSheet.getDataRange().getDisplayValues();
   
   if (pData.length < 2) return successResponse([]);
   
@@ -96,7 +96,7 @@ function getProducts() {
   for (var i = 1; i < pData.length; i++) {
     var barcode = pData[i][pBarcodeCol].toString();
     var name = pData[i][pNameCol];
-    var price = pData[i][pPriceCol];
+    var price = parseFloat(pData[i][pPriceCol]) || 0;
     var totalStok = stokMap[barcode] || 0;
     
     products.push({
@@ -118,7 +118,7 @@ function processTransaction(transaction) {
   var bSheet = ss.getSheetByName("StokBatch");
   var tSheet = ss.getSheetByName("DatabaseTransaksi");
   
-  var bData = bSheet.getDataRange().getValues();
+  var bData = bSheet.getDataRange().getDisplayValues();
   var bHeaders = bData[0];
   
   var bIdCol = bHeaders.indexOf("Batch_ID");
@@ -190,7 +190,7 @@ function updateTransactionStatus(data) {
   var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("DatabaseTransaksi");
   if (!sheet) return errorResponse('Sheet "DatabaseTransaksi" tidak ditemukan');
   
-  var table = sheet.getDataRange().getValues();
+  var table = sheet.getDataRange().getDisplayValues();
   var headers = table[0];
   var idCol = headers.indexOf("ID");
   var statusCol = headers.indexOf("Status");
@@ -213,7 +213,7 @@ function saveProduct(product) {
   var pSheet = ss.getSheetByName("DatabaseProduk");
   var bSheet = ss.getSheetByName("StokBatch");
   
-  var pData = pSheet.getDataRange().getValues();
+  var pData = pSheet.getDataRange().getDisplayValues();
   var pHeaders = pData[0];
   var pBarcodeCol = pHeaders.indexOf("Barcode_ID");
   
@@ -237,7 +237,7 @@ function saveProduct(product) {
     
     // Jika barcode diubah, perbarui juga Barcode_ID di seluruh batch StokBatch
     if (product.oldBarcode && product.oldBarcode !== "" && product.oldBarcode.toString() !== product.Barcode_ID.toString()) {
-      var bData = bSheet.getDataRange().getValues();
+      var bData = bSheet.getDataRange().getDisplayValues();
       var bBarcodeCol = bData[0].indexOf("Barcode_ID");
       if (bBarcodeCol > -1) {
         for (var j = 1; j < bData.length; j++) {
@@ -280,7 +280,7 @@ function deleteProduct(data) {
   var bSheet = ss.getSheetByName("StokBatch");
   
   // 1. Hapus dari DatabaseProduk
-  var pTable = pSheet.getDataRange().getValues();
+  var pTable = pSheet.getDataRange().getDisplayValues();
   var pBarcodeCol = pTable[0].indexOf("Barcode_ID");
   for (var i = 1; i < pTable.length; i++) {
     if (pTable[i][pBarcodeCol].toString() === data.Barcode_ID.toString()) {
@@ -290,7 +290,7 @@ function deleteProduct(data) {
   }
   
   // 2. Hapus seluruh batch yang bersangkutan dari StokBatch
-  var bTable = bSheet.getDataRange().getValues();
+  var bTable = bSheet.getDataRange().getDisplayValues();
   var bBarcodeCol = bTable[0].indexOf("Barcode_ID");
   // Hapus dari bawah ke atas agar indeks baris tidak bergeser salah
   for (var j = bTable.length - 1; j >= 1; j--) {
