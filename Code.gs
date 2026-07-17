@@ -80,7 +80,8 @@ function getProducts() {
   
   if (bData.length > 1 && bBarcodeCol > -1 && bSisaCol > -1) {
     for (var i = 1; i < bData.length; i++) {
-      var barcode = bData[i][bBarcodeCol].toString();
+      var barcode = bData[i][bBarcodeCol].toString().trim();
+      if (barcode === "") continue;
       var sisa = parseInt(bData[i][bSisaCol]) || 0;
       if (!stokMap[barcode]) stokMap[barcode] = 0;
       stokMap[barcode] += sisa;
@@ -89,22 +90,31 @@ function getProducts() {
   
   var products = [];
   var pBarcodeCol = pHeaders.indexOf("Barcode_ID");
+  if (pBarcodeCol === -1) pBarcodeCol = 0;
   var pNameCol = pHeaders.indexOf("Nama_Camilan");
+  if (pNameCol === -1) pNameCol = 1;
   var pPriceCol = pHeaders.indexOf("Harga_Jual");
   if (pPriceCol === -1) pPriceCol = pHeaders.indexOf("Harga");
+  if (pPriceCol === -1) pPriceCol = 2;
+  var pModalCol = pHeaders.indexOf("Harga_Modal");
+  if (pModalCol === -1) pModalCol = pHeaders.indexOf("Harga_Beli");
   
   for (var i = 1; i < pData.length; i++) {
-    var barcode = pData[i][pBarcodeCol].toString();
-    var name = pData[i][pNameCol];
+    var barcode = pData[i][pBarcodeCol] ? pData[i][pBarcodeCol].toString().trim() : "";
+    var name = pData[i][pNameCol] || "";
+    if (!name && !barcode) continue; // Skip baris benar-benar kosong
     var price = parseFloat(pData[i][pPriceCol]) || 0;
-    var totalStok = stokMap[barcode] || 0;
+    var modal = pModalCol > -1 ? (parseFloat(pData[i][pModalCol]) || 0) : 0;
+    var totalStok = barcode ? (stokMap[barcode] || 0) : 0;
     
     products.push({
       Barcode_ID: barcode,
       Nama_Camilan: name,
       Harga: price,
+      Harga_Modal: modal,
       Stok: totalStok,
-      Status: totalStok > 0 ? "Ready" : "Habis"
+      Status: totalStok > 0 ? "Ready" : "Habis",
+      _sheetRow: i + 1 // Nomor baris di sheet (untuk update tanpa barcode)
     });
   }
   
@@ -222,18 +232,51 @@ function saveProduct(product) {
   var prodRow = -1;
   var searchBarcode = (product.oldBarcode && product.oldBarcode !== "") ? product.oldBarcode : product.Barcode_ID;
   
-  for (var i = 1; i < pData.length; i++) {
-    if (pData[i][pBarcodeCol].toString() === searchBarcode.toString()) {
-      exists = true;
-      prodRow = i + 1;
-      break;
+  // Cari berdasarkan barcode ATAU berdasarkan _sheetRow (untuk produk tanpa barcode)
+  if (product._sheetRow && product._sheetRow > 1) {
+    // Lookup langsung via nomor baris sheet
+    prodRow = product._sheetRow;
+    exists = true;
+  } else if (searchBarcode && searchBarcode !== "") {
+    for (var i = 1; i < pData.length; i++) {
+      if (pData[i][pBarcodeCol].toString().trim() === searchBarcode.toString().trim()) {
+        exists = true;
+        prodRow = i + 1;
+        break;
+      }
     }
   }
   
+  // Fallback: cari berdasarkan Nama_Camilan jika barcode kosong
+  if (!exists && product.Nama_Camilan) {
+    var pNameCol = pHeaders.indexOf("Nama_Camilan");
+    if (pNameCol === -1) pNameCol = 1;
+    for (var i = 1; i < pData.length; i++) {
+      if (pData[i][pNameCol].toString().trim() === product.Nama_Camilan.toString().trim()) {
+        exists = true;
+        prodRow = i + 1;
+        break;
+      }
+    }
+  }
+  
+  // Tentukan jumlah kolom yang akan ditulis berdasarkan header sheet
+  var pPriceCol = pHeaders.indexOf("Harga_Jual");
+  if (pPriceCol === -1) pPriceCol = pHeaders.indexOf("Harga");
+  if (pPriceCol === -1) pPriceCol = 2;
+  var pModalCol = pHeaders.indexOf("Harga_Modal");
+  if (pModalCol === -1) pModalCol = pHeaders.indexOf("Harga_Beli");
+  
   if (exists) {
-    pSheet.getRange(prodRow, 1, 1, 3).setValues([[
-      product.Barcode_ID, product.Nama_Camilan, product.Harga
-    ]]);
+    // Update kolom yang ada
+    pSheet.getRange(prodRow, pBarcodeCol + 1).setValue(product.Barcode_ID || "");
+    var pNameColIdx = pHeaders.indexOf("Nama_Camilan");
+    if (pNameColIdx === -1) pNameColIdx = 1;
+    pSheet.getRange(prodRow, pNameColIdx + 1).setValue(product.Nama_Camilan);
+    pSheet.getRange(prodRow, pPriceCol + 1).setValue(product.Harga);
+    if (pModalCol > -1 && product.Harga_Beli) {
+      pSheet.getRange(prodRow, pModalCol + 1).setValue(product.Harga_Beli);
+    }
     
     // Jika barcode diubah, perbarui juga Barcode_ID di seluruh batch StokBatch
     if (product.oldBarcode && product.oldBarcode !== "" && product.oldBarcode.toString() !== product.Barcode_ID.toString()) {

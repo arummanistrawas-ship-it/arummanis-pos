@@ -566,51 +566,54 @@ const app = {
         container.innerHTML = '';
         const term = document.getElementById('searchProductInput').value.toLowerCase();
         
-        const filtered = this.state.products.filter(p => 
-            p.Barcode_ID.toLowerCase().includes(term) || p.Nama_Camilan.toLowerCase().includes(term)
-        );
+        this.state.products.forEach((p, idx) => {
+            // Filter pencarian
+            const barcodeStr = (p.Barcode_ID || '').toLowerCase();
+            const nameStr = (p.Nama_Camilan || '').toLowerCase();
+            if (term && !barcodeStr.includes(term) && !nameStr.includes(term)) return;
 
-        if(filtered.length === 0) {
-            container.innerHTML = `<div class="text-center mt-1">Produk tidak ditemukan.</div>`;
-            return;
-        }
-
-        filtered.forEach(p => {
             const div = document.createElement('div');
             div.className = 'list-item';
             div.innerHTML = `
                 <div class="list-item-header">
-                    <strong>${p.Nama_Camilan}</strong>
-                    <span class="status-badge ${p.Stok > 0 ? 'bg-success' : 'bg-warning'}">Stok: ${p.Stok}</span>
+                    <strong>${p.Nama_Camilan || '(Tanpa Nama)'}</strong>
+                    <span class="status-badge ${p.Barcode_ID ? 'bg-success' : 'bg-warning'}">${p.Barcode_ID ? 'Barcode: ✓' : 'Belum Ada Barcode'}</span>
                 </div>
-                <div>Barcode: ${p.Barcode_ID}</div>
-                <div>Harga Dasar: ${formatRupiah(p.Harga)}</div>
+                <div>Barcode: ${p.Barcode_ID || '<i style="color:#999">— kosong —</i>'}</div>
+                <div>Harga Jual: ${formatRupiah(p.Harga)}${p.Harga_Modal ? ' | Modal: ' + formatRupiah(p.Harga_Modal) : ''}</div>
                 <div class="action-buttons mt-1">
-                    <button onclick="app.showProductForm('${p.Barcode_ID}')" class="btn btn-sm btn-warning"><i class="fas fa-edit"></i> Edit</button>
-                    <button onclick="app.deleteProduct('${p.Barcode_ID}')" class="btn btn-sm btn-danger"><i class="fas fa-trash"></i> Hapus</button>
+                    <button onclick="app.showProductForm(${idx})" class="btn btn-sm btn-warning"><i class="fas fa-edit"></i> Edit</button>
+                    <button onclick="app.deleteProduct(${idx})" class="btn btn-sm btn-danger"><i class="fas fa-trash"></i> Hapus</button>
                 </div>
             `;
             container.appendChild(div);
         });
         
+        if (container.innerHTML === '') {
+            container.innerHTML = `<div class="text-center mt-1">Produk tidak ditemukan.</div>`;
+        }
+        
         document.getElementById('searchProductInput').oninput = () => this.renderProductList();
     },
 
-    showProductForm: function(barcode = null) {
+    showProductForm: function(indexOrNull) {
         document.getElementById('productFormOverlay').classList.remove('hidden');
         const batchFields = document.getElementById('prodFormBatchFields');
         
-        if (barcode && typeof barcode === 'string') {
-            const p = this.state.products.find(x => compareBarcode(x.Barcode_ID, barcode));
+        if (indexOrNull !== null && indexOrNull !== undefined && typeof indexOrNull === 'number') {
+            const p = this.state.products[indexOrNull];
+            if (!p) return;
             document.getElementById('productFormTitle').textContent = 'Edit Produk';
-            document.getElementById('prodFormId').value = p.Barcode_ID;
-            document.getElementById('prodFormBarcode').value = p.Barcode_ID;
-            document.getElementById('prodFormName').value = p.Nama_Camilan;
-            document.getElementById('prodFormPrice').value = p.Harga;
-            document.getElementById('prodFormStock').value = p.Stok;
+            document.getElementById('prodFormId').value = indexOrNull; // Simpan INDEX, bukan barcode
+            document.getElementById('prodFormBarcode').value = p.Barcode_ID || '';
+            document.getElementById('prodFormName').value = p.Nama_Camilan || '';
+            document.getElementById('prodFormPrice').value = p.Harga || '';
+            document.getElementById('prodFormStock').value = p.Stok || 0;
             
-            // Sembunyikan field batch saat edit (stok batch diatur via restock di Sheets)
-            batchFields.classList.add('hidden');
+            // Tampilkan batch fields saat edit agar bisa set expired dan harga beli
+            batchFields.classList.remove('hidden');
+            document.getElementById('prodFormPriceBuy').value = p.Harga_Modal || p.Harga_Beli || '';
+            document.getElementById('prodFormExpired').value = p.Tanggal_Expired || '';
         } else {
             document.getElementById('productFormTitle').textContent = 'Tambah Produk';
             document.getElementById('prodFormId').value = '';
@@ -619,7 +622,6 @@ const app = {
             document.getElementById('prodFormPrice').value = '';
             document.getElementById('prodFormStock').value = '';
             
-            // Tampilkan field batch saat produk baru
             batchFields.classList.remove('hidden');
             document.getElementById('prodFormPriceBuy').value = '';
             document.getElementById('prodFormExpired').value = '';
@@ -630,7 +632,8 @@ const app = {
         document.getElementById('productFormOverlay').classList.add('hidden');
     },
     saveProduct: function() {
-        const oldId = document.getElementById('prodFormId').value;
+        const editIndex = document.getElementById('prodFormId').value;
+        const isEdit = editIndex !== '' && editIndex !== null && editIndex !== undefined;
         const newBarcode = document.getElementById('prodFormBarcode').value.trim();
         const name = document.getElementById('prodFormName').value.trim();
         const price = parseInt(document.getElementById('prodFormPrice').value) || 0;
@@ -639,16 +642,13 @@ const app = {
         const priceBuy = parseInt(document.getElementById('prodFormPriceBuy').value) || 0;
         const expired = document.getElementById('prodFormExpired').value.trim();
         
-        if(!newBarcode || !name) return Swal.fire('Error', 'Lengkapi form (Barcode dan Nama)!', 'error');
+        if(!name) return Swal.fire('Error', 'Nama Produk wajib diisi!', 'error');
 
-        // Validasi input batch jika produk baru dengan stok > 0
-        if (!oldId && stock > 0) {
+        // Validasi batch hanya jika produk baru DAN stok > 0
+        if (!isEdit && stock > 0) {
             const dateRegex = /^\d{2}\/\d{2}\/\d{4}$/;
-            if (!expired || !dateRegex.test(expired)) {
+            if (expired && !dateRegex.test(expired)) {
                 return Swal.fire('Error', 'Format Tanggal Expired wajib DD/MM/YYYY! (Cth: 31/12/2026)', 'error');
-            }
-            if (!priceBuy) {
-                return Swal.fire('Error', 'Harga Beli/Modal wajib diisi!', 'error');
             }
         }
 
@@ -659,22 +659,40 @@ const app = {
             Stok: stock, 
             Status: stock > 0 ? 'Ready' : 'Habis',
             Harga_Beli: priceBuy,
+            Harga_Modal: priceBuy,
             Tanggal_Expired: expired
         };
 
-        if (oldId) {
-            // Jika ganti barcode, pastikan barcode baru belum dipakai produk lain
-            if(!compareBarcode(oldId, newBarcode) && this.state.products.find(x => compareBarcode(x.Barcode_ID, newBarcode))) {
-                return Swal.fire('Error', 'Barcode sudah dipakai produk lain!', 'error');
+        if (isEdit) {
+            const idx = parseInt(editIndex);
+            const oldProduct = this.state.products[idx];
+            if (!oldProduct) return;
+            
+            // Cek duplikat barcode jika barcode baru diisi dan berbeda dari yang lama
+            if (newBarcode && oldProduct.Barcode_ID !== newBarcode) {
+                const duplicate = this.state.products.find((x, i) => i !== idx && x.Barcode_ID && compareBarcode(x.Barcode_ID, newBarcode));
+                if (duplicate) {
+                    return Swal.fire('Error', 'Barcode sudah dipakai produk lain!', 'error');
+                }
             }
-            const index = this.state.products.findIndex(x => compareBarcode(x.Barcode_ID, oldId));
-            if(index > -1) this.state.products[index] = product;
+            
+            // Pertahankan _sheetRow untuk sinkronisasi
+            product._sheetRow = oldProduct._sheetRow;
+            this.state.products[idx] = product;
+            
+            this.state.syncQueue.push({ 
+                type: 'product', 
+                data: { ...product, oldBarcode: oldProduct.Barcode_ID || '' } 
+            });
         } else {
-            if(this.state.products.find(x => compareBarcode(x.Barcode_ID, newBarcode))) return Swal.fire('Error', 'Barcode sudah ada!', 'error');
+            // Produk baru — cek duplikat barcode jika diisi
+            if (newBarcode && this.state.products.find(x => x.Barcode_ID && compareBarcode(x.Barcode_ID, newBarcode))) {
+                return Swal.fire('Error', 'Barcode sudah ada!', 'error');
+            }
             this.state.products.push(product);
+            this.state.syncQueue.push({ type: 'product', data: { ...product, oldBarcode: '' } });
         }
 
-        this.state.syncQueue.push({ type: 'product', data: { ...product, oldBarcode: oldId } });
         this.saveData();
         this.updateProductDatalist();
         this.closeProductForm();
@@ -682,13 +700,17 @@ const app = {
         this.syncData();
         Swal.fire('Berhasil', 'Produk tersimpan', 'success');
     },
-    deleteProduct: function(barcode) {
+    deleteProduct: function(index) {
+        const p = this.state.products[index];
+        if (!p) return;
         Swal.fire({
-            title: 'Hapus Produk?', text: 'Produk ini akan dihapus dari sistem', icon: 'warning', showCancelButton: true
+            title: 'Hapus Produk?', text: `Hapus "${p.Nama_Camilan}" dari sistem?`, icon: 'warning', showCancelButton: true
         }).then(res => {
             if(res.isConfirmed) {
-                this.state.products = this.state.products.filter(x => !compareBarcode(x.Barcode_ID, barcode));
-                this.state.syncQueue.push({ type: 'delete_product', data: { Barcode_ID: barcode } });
+                this.state.products.splice(index, 1);
+                if (p.Barcode_ID) {
+                    this.state.syncQueue.push({ type: 'delete_product', data: { Barcode_ID: p.Barcode_ID, Nama_Camilan: p.Nama_Camilan, _sheetRow: p._sheetRow } });
+                }
                 this.saveData();
                 this.updateProductDatalist();
                 this.renderProductList();
