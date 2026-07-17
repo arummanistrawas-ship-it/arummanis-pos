@@ -273,18 +273,15 @@ const app = {
 
     updateCartUI: function() {
         const container = document.getElementById('cartItems');
-        const emptyMsg = document.getElementById('emptyCartMessage');
         container.innerHTML = '';
         
         let subtotal = 0;
         let count = 0;
 
         if (this.state.cart.length === 0) {
-            container.appendChild(emptyMsg);
-            emptyMsg.classList.remove('hidden');
+            container.innerHTML = '<div class="empty-cart"><p>Keranjang kosong</p></div>';
             document.getElementById('processCheckoutBtn').disabled = true;
         } else {
-            emptyMsg.classList.add('hidden');
             document.getElementById('processCheckoutBtn').disabled = false;
             
             this.state.cart.forEach(item => {
