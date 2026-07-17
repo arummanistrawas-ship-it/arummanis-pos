@@ -266,8 +266,13 @@
                             <input type="number" id="prodFormPriceBuy" class="input-full" placeholder="Cth: 12000">
                         </div>
                         <div class="form-group">
-                            <label>Tanggal Expired (DD/MM/YYYY)</label>
-                            <input type="text" id="prodFormExpired" class="input-full" placeholder="Cth: 31/12/2026">
+                            <label>Tanggal Expired</label>
+                            <input type="date" id="prodFormExpired" class="input-full">
+                            <div class="quick-date-helpers mt-1">
+                                <button type="button" class="btn-date-helper" onclick="app.setQuickExpired('prodFormExpired', 3)">+3 Bln</button>
+                                <button type="button" class="btn-date-helper" onclick="app.setQuickExpired('prodFormExpired', 6)">+6 Bln</button>
+                                <button type="button" class="btn-date-helper" onclick="app.setQuickExpired('prodFormExpired', 12)">+1 Thn</button>
+                            </div>
                         </div>
                     </div>
                     <div class="action-buttons mt-1">
@@ -310,8 +315,13 @@
                         <input type="number" id="restockPriceBuy" class="input-full" placeholder="Cth: 12000" required>
                     </div>
                     <div class="form-group">
-                        <label>Tanggal Expired (DD/MM/YYYY)</label>
-                        <input type="text" id="restockExpired" class="input-full" placeholder="Cth: 31/12/2026">
+                        <label>Tanggal Expired</label>
+                        <input type="date" id="restockExpired" class="input-full">
+                        <div class="quick-date-helpers mt-1">
+                            <button type="button" class="btn-date-helper" onclick="app.setQuickExpired('restockExpired', 3)">+3 Bln</button>
+                            <button type="button" class="btn-date-helper" onclick="app.setQuickExpired('restockExpired', 6)">+6 Bln</button>
+                            <button type="button" class="btn-date-helper" onclick="app.setQuickExpired('restockExpired', 12)">+1 Thn</button>
+                        </div>
                     </div>
                     
                     <div class="action-buttons mt-1">

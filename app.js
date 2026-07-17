@@ -50,6 +50,26 @@ const playBeep = () => {
     }
 };
 
+// Konversi Tanggal dari Format Sheet (DD/MM/YYYY) ke Format Date Picker (YYYY-MM-DD)
+const convertDateToPickerFormat = (dateStr) => {
+    if (!dateStr) return '';
+    const parts = dateStr.split('/');
+    if (parts.length === 3) {
+        return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
+    }
+    return dateStr;
+};
+
+// Konversi Tanggal dari Format Date Picker (YYYY-MM-DD) ke Format Sheet (DD/MM/YYYY)
+const convertDateToSheetFormat = (dateStr) => {
+    if (!dateStr) return '';
+    const parts = dateStr.split('-');
+    if (parts.length === 3) {
+        return `${parts[2]}/${parts[1]}/${parts[0]}`;
+    }
+    return dateStr;
+};
+
 // Helper pembanding barcode tahan crash tipe data (String/Number) dan Null/Undefined
 const compareBarcode = (a, b) => {
     if (a === null || a === undefined || b === null || b === undefined) return false;
@@ -1060,7 +1080,7 @@ const app = {
             // Tampilkan batch fields saat edit agar bisa set expired dan harga beli
             batchFields.classList.remove('hidden');
             document.getElementById('prodFormPriceBuy').value = p.Harga_Modal || p.Harga_Beli || '';
-            document.getElementById('prodFormExpired').value = p.Tanggal_Expired || '';
+            document.getElementById('prodFormExpired').value = convertDateToPickerFormat(p.Tanggal_Expired || '');
         } else {
             document.getElementById('productFormTitle').textContent = 'Tambah Produk';
             document.getElementById('prodFormId').value = '';
@@ -1105,18 +1125,12 @@ const app = {
         const barcode = document.getElementById('restockSelectedBarcode').value;
         const qty = parseInt(document.getElementById('restockQty').value) || 0;
         const priceBuy = parseInt(document.getElementById('restockPriceBuy').value) || 0;
-        const expired = document.getElementById('restockExpired').value.trim();
+        const expiredRaw = document.getElementById('restockExpired').value;
+        const expired = convertDateToSheetFormat(expiredRaw);
 
         if (!barcode) return Swal.fire('Error', 'Silakan pilih produk terlebih dahulu!', 'warning');
         if (qty <= 0) return Swal.fire('Error', 'Jumlah stok masuk harus lebih dari 0!', 'warning');
         if (priceBuy <= 0) return Swal.fire('Error', 'Harga beli modal harus lebih dari 0!', 'warning');
-
-        if (expired) {
-            const dateRegex = /^\d{2}\/\d{2}\/\d{4}$/;
-            if (!dateRegex.test(expired)) {
-                return Swal.fire('Error', 'Format Tanggal Expired wajib DD/MM/YYYY! (Cth: 31/12/2026)', 'error');
-            }
-        }
 
         // Cari produk lokal untuk diupdate
         const p = this.state.products.find(x => compareBarcode(x.Barcode_ID, barcode));
@@ -1214,6 +1228,17 @@ const app = {
         }
     },
 
+    setQuickExpired: function(inputId, monthsToAdd) {
+        const today = new Date();
+        today.setMonth(today.getMonth() + monthsToAdd);
+        
+        const year = today.getFullYear();
+        const month = String(today.getMonth() + 1).padStart(2, '0');
+        const day = String(today.getDate()).padStart(2, '0');
+        
+        document.getElementById(inputId).value = `${year}-${month}-${day}`;
+    },
+
     closeProductForm: function() {
         this.stopProductScanner();
         document.getElementById('productFormOverlay').classList.add('hidden');
@@ -1227,17 +1252,10 @@ const app = {
         const stock = parseInt(document.getElementById('prodFormStock').value) || 0;
         
         const priceBuy = parseInt(document.getElementById('prodFormPriceBuy').value) || 0;
-        const expired = document.getElementById('prodFormExpired').value.trim();
+        const expiredRaw = document.getElementById('prodFormExpired').value;
+        const expired = convertDateToSheetFormat(expiredRaw);
         
         if(!name) return Swal.fire('Error', 'Nama Produk wajib diisi!', 'error');
-
-        // Validasi batch hanya jika produk baru DAN stok > 0
-        if (!isEdit && stock > 0) {
-            const dateRegex = /^\d{2}\/\d{2}\/\d{4}$/;
-            if (expired && !dateRegex.test(expired)) {
-                return Swal.fire('Error', 'Format Tanggal Expired wajib DD/MM/YYYY! (Cth: 31/12/2026)', 'error');
-            }
-        }
 
         const product = { 
             Barcode_ID: newBarcode, 

@@ -211,3 +211,26 @@ body { background: linear-gradient(135deg, #fdfbfb 0%, #ebedee 100%); color: var
     color: white;
     border-color: var(--success);
 }
+
+/* Quick Date Helpers */
+.quick-date-helpers {
+    display: flex;
+    gap: 8px;
+    margin-top: 6px;
+}
+.btn-date-helper {
+    background: #f1f5f9;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    padding: 6px 10px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: #475569;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    user-select: none;
+}
+.btn-date-helper:hover {
+    background: #e2e8f0;
+    color: #0f172a;
+}
