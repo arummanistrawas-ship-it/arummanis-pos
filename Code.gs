@@ -75,18 +75,36 @@ function getProducts() {
   var pHeaders = pData[0];
   var bHeaders = bData[0];
   
-  // Hitung total Stok_Sisa per Barcode_ID dari tab StokBatch
+  // Ambil data batch detail per Barcode_ID dari tab StokBatch
   var stokMap = {};
+  var batchesMap = {}; // Map barcode ke list batch aktif
   var bBarcodeCol = bHeaders.indexOf("Barcode_ID");
   var bSisaCol = bHeaders.indexOf("Stok_Sisa");
+  var bExpCol = bHeaders.indexOf("Tanggal_Expired");
+  var bBuyCol = bHeaders.indexOf("Harga_Beli");
+  var bIdCol = bHeaders.indexOf("Batch_ID");
   
   if (bData.length > 1 && bBarcodeCol > -1 && bSisaCol > -1) {
     for (var i = 1; i < bData.length; i++) {
       var barcode = bData[i][bBarcodeCol].toString().trim();
       if (barcode === "") continue;
       var sisa = parseInt(bData[i][bSisaCol]) || 0;
+      if (sisa <= 0) continue; // Hanya ambil batch yang masih aktif memiliki stok
+      
+      var exp = bExpCol > -1 ? bData[i][bExpCol] : "";
+      var buy = bBuyCol > -1 ? (parseInt(bData[i][bBuyCol]) || 0) : 0;
+      var bid = bIdCol > -1 ? bData[i][bIdCol] : "";
+      
       if (!stokMap[barcode]) stokMap[barcode] = 0;
       stokMap[barcode] += sisa;
+      
+      if (!batchesMap[barcode]) batchesMap[barcode] = [];
+      batchesMap[barcode].push({
+        batchId: bid,
+        stokSisa: sisa,
+        expiredDate: exp,
+        hargaBeli: buy
+      });
     }
   }
   
@@ -116,6 +134,7 @@ function getProducts() {
       Harga_Modal: modal,
       Stok: totalStok,
       Status: totalStok > 0 ? "Ready" : "Habis",
+      batches: barcode ? (batchesMap[barcode] || []) : [],
       _sheetRow: i + 1 // Nomor baris di sheet (untuk update tanpa barcode)
     });
   }

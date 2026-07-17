@@ -865,6 +865,22 @@ const app = {
             if(p) {
                 p.Stok = Math.max(0, parseInt(p.Stok) - item.qty);
                 if(p.Stok === 0) p.Status = 'Habis';
+
+                // Kurangi stok batch lokal secara FIFO
+                if (p.batches && Array.isArray(p.batches)) {
+                    let qtyToDeduct = parseInt(item.qty);
+                    // Urutkan batch dari expired terdekat ke terjauh (FIFO)
+                    p.batches.sort((a, b) => new Date(convertDateToPickerFormat(a.expiredDate)) - new Date(convertDateToPickerFormat(b.expiredDate)));
+                    for (let b = 0; b < p.batches.length; b++) {
+                        if (qtyToDeduct <= 0) break;
+                        const batch = p.batches[b];
+                        const deduct = Math.min(qtyToDeduct, batch.stokSisa);
+                        batch.stokSisa -= deduct;
+                        qtyToDeduct -= deduct;
+                    }
+                    // Hanya pertahankan batch yang masih memiliki stok sisa
+                    p.batches = p.batches.filter(b => b.stokSisa > 0);
+                }
             }
         });
 
@@ -1066,6 +1082,8 @@ const app = {
     showProductForm: function(indexOrNull) {
         document.getElementById('productFormOverlay').classList.remove('hidden');
         const batchFields = document.getElementById('prodFormBatchFields');
+        const regBatches = document.getElementById('prodFormRegisteredBatches');
+        const stockInput = document.getElementById('prodFormStock');
         
         if (indexOrNull !== null && indexOrNull !== undefined && typeof indexOrNull === 'number') {
             const p = this.state.products[indexOrNull];
@@ -1075,23 +1093,57 @@ const app = {
             document.getElementById('prodFormBarcode').value = p.Barcode_ID || '';
             document.getElementById('prodFormName').value = p.Nama_Camilan || '';
             document.getElementById('prodFormPrice').value = p.Harga || '';
-            document.getElementById('prodFormStock').value = p.Stok || 0;
             
-            // Tampilkan batch fields saat edit agar bisa set expired dan harga beli
-            batchFields.classList.remove('hidden');
-            document.getElementById('prodFormPriceBuy').value = p.Harga_Modal || p.Harga_Beli || '';
-            document.getElementById('prodFormExpired').value = convertDateToPickerFormat(p.Tanggal_Expired || '');
+            // Kunci total stok karena dihitung otomatis dari batch
+            stockInput.value = p.Stok || 0;
+            stockInput.disabled = true;
+            stockInput.title = "Stok total dihitung otomatis dari rincian batch";
+            
+            // Sembunyikan input batch awal (hanya untuk produk baru)
+            batchFields.classList.add('hidden');
+            
+            // Tampilkan rincian batch terdaftar
+            regBatches.classList.remove('hidden');
+            
+            let batchesHtml = '';
+            if (p.batches && p.batches.length > 0) {
+                // Urutkan berdasarkan Tanggal Expired (FIFO)
+                const sortedBatches = [...p.batches].sort((a, b) => new Date(convertDateToPickerFormat(a.expiredDate)) - new Date(convertDateToPickerFormat(b.expiredDate)));
+                sortedBatches.forEach((b, idx) => {
+                    batchesHtml += `
+                        <div style="background: #f8fafc; border: 1px solid #e2e8f0; padding: 10px; border-radius: 6px; display: flex; justify-content: space-between; align-items: center; font-size: 0.9rem;">
+                            <div>
+                                <strong style="color: var(--primary);">Stok ${idx + 1}:</strong> ${b.stokSisa} pcs
+                                <div style="font-size: 0.8rem; color: #64748b; margin-top: 2px;">Exp: ${b.expiredDate || '—'}</div>
+                            </div>
+                            <div style="font-size: 0.85rem; font-weight: 600; color: #475569;">
+                                Modal: ${formatRupiah(b.hargaBeli)}
+                            </div>
+                        </div>
+                    `;
+                });
+            } else {
+                batchesHtml = '<div style="color: #94a3b8; font-size: 0.85rem; font-style: italic; text-align: center;">Tidak ada batch aktif (Stok 0)</div>';
+            }
+            document.getElementById('prodFormBatchesList').innerHTML = batchesHtml;
         } else {
             document.getElementById('productFormTitle').textContent = 'Tambah Produk';
             document.getElementById('prodFormId').value = '';
             document.getElementById('prodFormBarcode').value = '';
             document.getElementById('prodFormName').value = '';
             document.getElementById('prodFormPrice').value = '';
-            document.getElementById('prodFormStock').value = '';
+            
+            stockInput.value = '';
+            stockInput.disabled = false;
+            stockInput.title = "";
             
             batchFields.classList.remove('hidden');
             document.getElementById('prodFormPriceBuy').value = '';
             document.getElementById('prodFormExpired').value = '';
+            
+            // Sembunyikan rincian batch terdaftar
+            regBatches.classList.add('hidden');
+            document.getElementById('prodFormBatchesList').innerHTML = '';
         }
     },
     showRestockForm: function() {
@@ -1140,6 +1192,15 @@ const app = {
             // Update harga beli default di data produk jika harga belinya berubah
             p.Harga_Beli = priceBuy;
             p.Harga_Modal = priceBuy;
+
+            // Tambahkan ke rincian batch lokal
+            if (!p.batches) p.batches = [];
+            p.batches.push({
+                batchId: 'B-' + Date.now(),
+                stokSisa: qty,
+                expiredDate: expired || convertDateToSheetFormat(new Date(Date.now() + 365*24*60*60*1000).toISOString().split('T')[0]),
+                hargaBeli: priceBuy
+            });
         }
 
         const restockData = {
@@ -1265,7 +1326,13 @@ const app = {
             Status: stock > 0 ? 'Ready' : 'Habis',
             Harga_Beli: priceBuy,
             Harga_Modal: priceBuy,
-            Tanggal_Expired: expired
+            Tanggal_Expired: expired,
+            batches: stock > 0 ? [{
+                batchId: 'B-' + Date.now(),
+                stokSisa: stock,
+                expiredDate: expired || convertDateToSheetFormat(new Date(Date.now() + 365*24*60*60*1000).toISOString().split('T')[0]),
+                hargaBeli: priceBuy
+            }] : []
         };
 
         if (isEdit) {
@@ -1281,8 +1348,12 @@ const app = {
                 }
             }
             
-            // Pertahankan _sheetRow untuk sinkronisasi
+            // Pertahankan _sheetRow, batches, dan Stok lama
             product._sheetRow = oldProduct._sheetRow;
+            product.batches = oldProduct.batches || [];
+            product.Stok = oldProduct.Stok || 0;
+            product.Status = product.Stok > 0 ? 'Ready' : 'Habis';
+            
             this.state.products[idx] = product;
             
             this.state.syncQueue.push({ 

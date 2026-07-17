@@ -275,6 +275,15 @@
                             </div>
                         </div>
                     </div>
+
+                    <!-- Detail Batch Terdaftar (Hanya muncul saat edit produk) -->
+                    <div id="prodFormRegisteredBatches" class="hidden" style="margin-top: 1rem; border-top: 1px dashed #cbd5e1; padding-top: 1rem;">
+                        <h4 style="margin-bottom: 0.6rem; font-size: 0.95rem; color: #475569;"><i class="fas fa-boxes"></i> Rincian Stok Batch (FIFO)</h4>
+                        <div id="prodFormBatchesList" style="display: flex; flex-direction: column; gap: 8px; max-height: 180px; overflow-y: auto; padding-right: 4px;">
+                            <!-- Injected by JS -->
+                        </div>
+                    </div>
+
                     <div class="action-buttons mt-1">
                         <button onclick="app.closeProductForm()" class="btn btn-secondary">Batal</button>
                         <button id="saveProdFormBtn" onclick="app.saveProduct()" class="btn btn-success">Simpan</button>
