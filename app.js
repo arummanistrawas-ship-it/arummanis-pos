@@ -463,6 +463,8 @@ const app = {
     // --- Checkout Logic ---
     prepareCheckout: function() {
         const total = this.state.tempTotal;
+        if (this.state.isScannerRunning) this.stopScanner();
+
         this.state.checkoutMode = 'new';
         this.state.repaymentTransactionId = null;
 
@@ -781,6 +783,7 @@ const app = {
             cash: (method === 'Tunai' || method === 'Kasbon') ? cash : 0,
             change: method === 'Tunai' ? (cash - this.state.tempTotal) : (method === 'Kasbon' ? -remainingDebt : 0),
             remainingDebt: remainingDebt,
+            initialDeposit: method === 'Kasbon' ? cash : 0, // Simpan DP awal secara permanen
             status: (method === 'Kasbon' && remainingDebt > 0) ? 'Belum Lunas' : 'Lunas'
         };
 
@@ -845,13 +848,18 @@ const app = {
             html += `<div class="r-row"><span>Tunai:</span> <span>${formatRupiah(trx.cash)}</span></div>
                      <div class="r-row"><span>Kembali:</span> <span>${formatRupiah(trx.change)}</span></div>`;
         } else if (trx.method === 'Kasbon') {
-            const dp = trx.cash || 0;
-            const debt = trx.remainingDebt !== undefined ? trx.remainingDebt : Math.max(0, trx.total - dp);
-            if (dp > 0) {
-                html += `<div class="r-row"><span>Uang Muka (DP):</span> <span>${formatRupiah(dp)}</span></div>`;
+            const initDP = trx.initialDeposit || 0;
+            const totalPaid = trx.cash || 0;
+            const subsequentPay = totalPaid - initDP;
+            const debt = trx.remainingDebt !== undefined ? trx.remainingDebt : Math.max(0, trx.total - totalPaid);
+            
+            html += `<div class="r-row"><span>Uang Muka (DP):</span> <span>${formatRupiah(initDP)}</span></div>`;
+            if (subsequentPay > 0) {
+                html += `<div class="r-row"><span>Pelunasan/Cicil:</span> <span>${formatRupiah(subsequentPay)}</span></div>`;
+                html += `<div class="r-row"><span>Total Terbayar:</span> <span>${formatRupiah(totalPaid)}</span></div>`;
             }
             html += `
-                <div class="r-row"><span>Sisa Hutang:</span> <span class="danger-text" style="font-weight:bold;">${formatRupiah(debt)}</span></div>
+                <div class="r-row"><span>Sisa Hutang:</span> <span class="${debt > 0 ? 'danger-text' : 'success-text'}" style="font-weight:bold;">${formatRupiah(debt)}</span></div>
                 <div class="r-row"><strong>STATUS:</strong> <strong class="${debt === 0 ? 'success-text' : 'danger-text'}">${debt === 0 ? 'LUNAS' : 'BELUM LUNAS'}</strong></div>
             `;
         }
@@ -1377,12 +1385,25 @@ const app = {
         text += `Subtotal : ${formatRupiah(trx.subtotal)}\n`;
         if (trx.discount > 0) text += `Diskon   : -${formatRupiah(trx.discount)}\n`;
         text += `*TOTAL   : ${formatRupiah(trx.total)}*\n`;
-        text += `Bayar    : ${trx.method}\n`;
         if (trx.method === 'Tunai') {
+            text += `Bayar    : Tunai\n`;
             text += `Tunai    : ${formatRupiah(trx.cash)}\n`;
             text += `Kembali  : ${formatRupiah(trx.change)}\n`;
+        } else if (trx.method === 'Kasbon') {
+            const initDP = trx.initialDeposit || 0;
+            const totalPaid = trx.cash || 0;
+            const subsequentPay = totalPaid - initDP;
+            const debt = trx.remainingDebt !== undefined ? trx.remainingDebt : Math.max(0, trx.total - totalPaid);
+
+            text += `Bayar    : Kasbon\n`;
+            text += `DP Awal  : ${formatRupiah(initDP)}\n`;
+            if (subsequentPay > 0) {
+                text += `Cicilan  : ${formatRupiah(subsequentPay)}\n`;
+                text += `Total    : ${formatRupiah(totalPaid)}\n`;
+            }
+            text += `Hutang   : ${formatRupiah(debt)}\n`;
+            text += `*STATUS  : ${debt === 0 ? 'LUNAS' : 'BELUM LUNAS'}*\n`;
         }
-        if (trx.status === 'Belum Lunas') text += `⚠️ *STATUS: BELUM LUNAS (KASBON)*\n`;
         text += `━━━━━━━━━━━━━━━━━━━━\n`;
         text += `Terima kasih sudah berbelanja! 🙏`;
         
@@ -1517,11 +1538,16 @@ const app = {
             
             // Info Pembayaran
             if (trx.method === 'Kasbon') {
-                const dp = trx.cash || 0;
-                const debt = trx.remainingDebt !== undefined ? trx.remainingDebt : Math.max(0, trx.total - dp);
+                const initDP = trx.initialDeposit || 0;
+                const totalPaid = trx.cash || 0;
+                const subsequentPay = totalPaid - initDP;
+                const debt = trx.remainingDebt !== undefined ? trx.remainingDebt : Math.max(0, trx.total - totalPaid);
+                
                 txt += "   " + makePrintRow("Metode:", "Kasbon", 28);
-                if (dp > 0) {
-                    txt += "   " + makePrintRow("Bayar DP:", formatRupiah(dp), 28);
+                txt += "   " + makePrintRow("Uang Muka (DP):", formatRupiah(initDP), 28);
+                if (subsequentPay > 0) {
+                    txt += "   " + makePrintRow("Pelunasan/Cicil:", formatRupiah(subsequentPay), 28);
+                    txt += "   " + makePrintRow("Total Terbayar:", formatRupiah(totalPaid), 28);
                 }
                 txt += "   " + makePrintRow("Sisa Hutang:", formatRupiah(debt), 28);
                 txt += "   ----------------------------\n";
