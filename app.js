@@ -18,6 +18,14 @@ const makePrintRow = (left, right, maxLen = 32) => {
     return leftStr + ' ' + rightStr + '\n';
 };
 
+// Helper untuk merapikan baris tulisan rata tengah dengan spasi manual (agar kompatibel di semua printer thermal)
+const makeCenterRow = (text, maxLen = 32) => {
+    const cleanText = text.toString().trim();
+    if (cleanText.length >= maxLen) return cleanText + '\n';
+    const spacesNeeded = Math.floor((maxLen - cleanText.length) / 2);
+    return ' '.repeat(spacesNeeded) + cleanText + '\n';
+};
+
 // Helper pembanding barcode tahan crash tipe data (String/Number) dan Null/Undefined
 const compareBarcode = (a, b) => {
     if (a === null || a === undefined || b === null || b === undefined) return false;
@@ -1039,28 +1047,44 @@ const app = {
             if (!printChar) throw new Error('Karakteristik Bluetooth untuk Print tidak ditemukan.');
 
             const ESC = '\x1B'; const textBoldOn = ESC + 'E\x01'; const textBoldOff = ESC + 'E\x00';
-            let txt = ESC + '@' + ESC + 'a\x01' + textBoldOn + "ARUMMANIS\n" + textBoldOff;
-            txt += "Camilan Manis & Gurih\n--------------------------------\n" + ESC + 'a\x00';
-            txt += `No : ${trx.id}\nTgl: ${new Date(trx.timestamp).toLocaleString('id-ID')}\nPel: ${trx.customer}\n--------------------------------\n`;
+            let txt = ESC + '@' + ESC + 'a\x00'; // Set default left alignment secara eksplisit
             
+            // Header struk (Dibuat center manual dengan lebar 30 karakter + 1 spasi margin)
+            txt += textBoldOn + " " + makeCenterRow("ARUMMANIS", 30) + textBoldOff;
+            txt += " " + makeCenterRow("Camilan Manis & Gurih", 30);
+            txt += " ------------------------------\n"; // 1 spasi + 30 strip
+            
+            // Metadata transaksi
+            txt += ` No : ${trx.id}\n Tgl: ${new Date(trx.timestamp).toLocaleString('id-ID')}\n Pel: ${trx.customer}\n`;
+            txt += " ------------------------------\n";
+            
+            // Daftar barang belanjaan
             trx.items.forEach(i => {
-                txt += `${i.Nama_Camilan}\n`;
+                txt += ` ${i.Nama_Camilan}\n`;
                 const left = `${i.qty} x ${formatRupiah(i.editPrice)}`;
                 const right = formatRupiah(i.qty * i.editPrice);
-                txt += makePrintRow(left, right);
+                txt += " " + makePrintRow(left, right, 30);
             });
-            txt += `--------------------------------\n`;
-            txt += makePrintRow("Subtotal:", formatRupiah(trx.subtotal));
-            txt += makePrintRow("Diskon:", "-" + formatRupiah(trx.discount || 0));
-            txt += textBoldOn + makePrintRow("TOTAL:", formatRupiah(trx.total)) + textBoldOff;
-            txt += `--------------------------------\n`;
-            txt += makePrintRow(`Bayar (${trx.method}):`, formatRupiah(trx.cash || 0));
-            txt += makePrintRow("Kembali:", formatRupiah(trx.change || 0));
+            txt += " ------------------------------\n";
+            
+            // Ringkasan Total
+            txt += " " + makePrintRow("Subtotal:", formatRupiah(trx.subtotal), 30);
+            txt += " " + makePrintRow("Diskon:", "-" + formatRupiah(trx.discount || 0), 30);
+            txt += textBoldOn + " " + makePrintRow("TOTAL:", formatRupiah(trx.total), 30) + textBoldOff;
+            txt += " ------------------------------\n";
+            
+            // Info Pembayaran
+            txt += " " + makePrintRow(`Bayar (${trx.method}):`, formatRupiah(trx.cash || 0), 30);
+            txt += " " + makePrintRow("Kembali:", formatRupiah(trx.change || 0), 30);
+            
             if(trx.status === 'Belum Lunas') {
-                txt += `--------------------------------\n`;
-                txt += textBoldOn + "STATUS: KASBON (BELUM LUNAS)\n" + textBoldOff;
+                txt += " ------------------------------\n";
+                txt += textBoldOn + "  " + makeCenterRow("STATUS: KASBON (BELUM LUNAS)", 28) + textBoldOff;
             }
-            txt += `--------------------------------\n` + ESC + 'a\x01' + "Terima Kasih!\n\n\n";
+            
+            // Footer
+            txt += " ------------------------------\n";
+            txt += " " + makeCenterRow("Terima Kasih!", 30) + "\n\n\n";
 
             const data = new TextEncoder().encode(txt);
             for (let i = 0; i < data.length; i += 256) {
