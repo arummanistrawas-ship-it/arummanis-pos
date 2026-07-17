@@ -223,7 +223,10 @@
             <!-- 6. PRODUCT MANAGEMENT -->
             <section id="view-products" class="view hidden">
                 <div class="card">
-                    <button onclick="app.showProductForm()" class="btn btn-primary btn-block mb-1"><i class="fas fa-plus"></i> Tambah Produk Baru</button>
+                    <div style="display: flex; gap: 10px; margin-bottom: 1rem;">
+                        <button onclick="app.showProductForm()" class="btn btn-primary" style="flex: 1;"><i class="fas fa-plus"></i> Produk Baru</button>
+                        <button onclick="app.showRestockForm()" class="btn btn-warning" style="flex: 1;"><i class="fas fa-boxes"></i> Restok Barang</button>
+                    </div>
                     <input type="text" id="searchProductInput" class="input-full mb-1" placeholder="Cari Produk...">
                     <div class="product-list" id="productManageList">
                         <!-- Injected by JS -->
@@ -270,6 +273,50 @@
                     <div class="action-buttons mt-1">
                         <button onclick="app.closeProductForm()" class="btn btn-secondary">Batal</button>
                         <button id="saveProdFormBtn" onclick="app.saveProduct()" class="btn btn-success">Simpan</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- RESTOCK FORM OVERLAY -->
+            <div id="restockFormOverlay" class="overlay hidden">
+                <div class="card popup">
+                    <h2 class="mb-1">Restok Produk</h2>
+                    
+                    <div class="form-group">
+                        <label>Pilih Produk (Ketik Nama / Scan Barcode)</label>
+                        <div class="manual-input" style="margin-top: 0.5rem; position: relative;">
+                            <div class="input-wrapper" style="flex: 1; position: relative;">
+                                <input type="text" id="restockProductSearch" placeholder="Ketik barcode/nama..." autocomplete="off">
+                                <div id="restockSuggestions" class="search-suggestions hidden"></div>
+                            </div>
+                            <button id="scanRestockBarcodeBtn" class="btn btn-secondary" onclick="app.startRestockScanner()" type="button"><i class="fas fa-camera"></i></button>
+                        </div>
+                    </div>
+                    <div id="restockScannerReader" class="hidden" style="margin-bottom: 1rem; border-radius: 8px; overflow: hidden; border: 2px dashed #ddd;"></div>
+                    
+                    <!-- Detail Produk yang Terpilih -->
+                    <div id="restockSelectedDetails" class="hidden" style="background: #f8fafc; padding: 12px; border-radius: 8px; margin-bottom: 1rem; border: 1px solid #e2e8f0; font-size: 0.95rem;">
+                        <input type="hidden" id="restockSelectedBarcode">
+                        <div><strong>Nama Produk:</strong> <span id="restockSelectedName">—</span></div>
+                        <div style="margin-top: 4px;"><strong>Stok Saat Ini:</strong> <span id="restockSelectedCurrentStock">—</span></div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label>Jumlah Stok Masuk (Pcs)</label>
+                        <input type="number" id="restockQty" class="input-full" placeholder="Cth: 20" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Harga Beli / Modal Per Pcs (Rp)</label>
+                        <input type="number" id="restockPriceBuy" class="input-full" placeholder="Cth: 12000" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Tanggal Expired (DD/MM/YYYY)</label>
+                        <input type="text" id="restockExpired" class="input-full" placeholder="Cth: 31/12/2026">
+                    </div>
+                    
+                    <div class="action-buttons mt-1">
+                        <button onclick="app.closeRestockForm()" class="btn btn-secondary">Batal</button>
+                        <button id="saveRestockFormBtn" onclick="app.saveRestock()" class="btn btn-success">Simpan Restok</button>
                     </div>
                 </div>
             </div>

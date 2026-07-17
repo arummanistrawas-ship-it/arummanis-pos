@@ -24,6 +24,8 @@ function doPost(e) {
             return saveProduct(payload.data);
         } else if (payload.type === 'delete_product') {
             return deleteProduct(payload.data);
+        } else if (payload.type === 'restock') {
+            return processRestock(payload.data);
         }
     }
     
@@ -399,4 +401,31 @@ function successResponse(data) {
 }
 function errorResponse(msg) {
   return ContentService.createTextOutput(JSON.stringify({ status: 'error', message: msg })).setMimeType(ContentService.MimeType.JSON);
+}
+
+// Tambahkan batch baru saat melakukan restok produk
+function processRestock(data) {
+  initSheets();
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var bSheet = ss.getSheetByName("StokBatch");
+  if (!bSheet) return errorResponse('Sheet "StokBatch" tidak ditemukan');
+  
+  var batchId = "B-" + Date.now();
+  var tanggalMasuk = formatDate(new Date());
+  // Default 1 tahun jika expired kosong
+  var tanggalExpired = data.expired || formatDate(new Date(Date.now() + 365*24*60*60*1000));
+  var hargaBeli = data.priceBuy || 0;
+  
+  bSheet.appendRow([
+    batchId,
+    data.Barcode_ID,
+    tanggalMasuk,
+    tanggalExpired,
+    data.qty,
+    data.qty, // Stok_Sisa = Stok_Awal
+    hargaBeli,
+    "Ready"
+  ]);
+  
+  return successResponse('Restok berhasil disimpan ke StokBatch');
 }

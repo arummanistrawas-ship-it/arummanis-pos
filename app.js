@@ -72,6 +72,7 @@ const app = {
         tempDiscount: 0,
         tempTotal: 0,
         productScanner: null,
+        restockScanner: null,
         bluetoothDevice: null,
         bluetoothChar: null,
         checkoutMode: 'new',
@@ -287,6 +288,57 @@ const app = {
 
         document.getElementById('printReceiptBtn').addEventListener('click', () => this.printReceipt());
         document.getElementById('editTransactionBtn').addEventListener('click', () => this.editLastTransaction());
+
+        // --- Restock Autocomplete Search ---
+        const restockInput = document.getElementById('restockProductSearch');
+        const restockSuggestions = document.getElementById('restockSuggestions');
+
+        restockInput.addEventListener('input', (e) => {
+            const term = e.target.value.trim().toLowerCase();
+            if (!term) {
+                restockSuggestions.classList.add('hidden');
+                restockSuggestions.innerHTML = '';
+                return;
+            }
+
+            const matches = this.state.products.filter(p => 
+                (p.Barcode_ID && p.Barcode_ID.toLowerCase().includes(term)) || 
+                (p.Nama_Camilan && p.Nama_Camilan.toLowerCase().includes(term))
+            );
+
+            if (matches.length === 0) {
+                restockSuggestions.innerHTML = '<div class="suggestion-item" style="color: #999; cursor: default;">Produk tidak ditemukan</div>';
+                restockSuggestions.classList.remove('hidden');
+                return;
+            }
+
+            restockSuggestions.innerHTML = '';
+            matches.slice(0, 8).forEach(p => {
+                const item = document.createElement('div');
+                item.className = 'suggestion-item';
+                item.innerHTML = `
+                    <div>
+                        <div class="suggestion-name">${p.Nama_Camilan}</div>
+                        <div class="suggestion-meta">Barcode: ${p.Barcode_ID || '—'} (Stok: ${p.Stok})</div>
+                    </div>
+                    <div style="font-weight: 600; color: var(--primary); font-size: 0.95rem;">${formatRupiah(p.Harga)}</div>
+                `;
+                item.addEventListener('click', () => {
+                    this.selectRestockProduct(p);
+                    restockInput.value = '';
+                    restockSuggestions.classList.add('hidden');
+                    restockSuggestions.innerHTML = '';
+                });
+                restockSuggestions.appendChild(item);
+            });
+            restockSuggestions.classList.remove('hidden');
+        });
+
+        document.addEventListener('click', (e) => {
+            if (!restockInput.contains(e.target) && !restockSuggestions.contains(e.target)) {
+                restockSuggestions.classList.add('hidden');
+            }
+        });
     },
 
     updateProductDatalist: function() {
@@ -1022,6 +1074,146 @@ const app = {
             document.getElementById('prodFormExpired').value = '';
         }
     },
+    showRestockForm: function() {
+        document.getElementById('restockProductSearch').value = '';
+        document.getElementById('restockQty').value = '';
+        document.getElementById('restockPriceBuy').value = '';
+        document.getElementById('restockExpired').value = '';
+        document.getElementById('restockSelectedBarcode').value = '';
+        document.getElementById('restockSelectedName').textContent = '—';
+        document.getElementById('restockSelectedCurrentStock').textContent = '—';
+        document.getElementById('restockSelectedDetails').classList.add('hidden');
+        document.getElementById('restockFormOverlay').classList.remove('hidden');
+    },
+
+    closeRestockForm: function() {
+        this.stopRestockScanner();
+        document.getElementById('restockFormOverlay').classList.add('hidden');
+    },
+
+    selectRestockProduct: function(product) {
+        document.getElementById('restockSelectedBarcode').value = product.Barcode_ID || '';
+        document.getElementById('restockSelectedName').textContent = product.Nama_Camilan;
+        document.getElementById('restockSelectedCurrentStock').textContent = `${product.Stok} pcs`;
+        
+        // Prefill modal / harga beli untuk menghemat waktu input
+        document.getElementById('restockPriceBuy').value = product.Harga_Beli || product.Harga_Modal || '';
+        document.getElementById('restockSelectedDetails').classList.remove('hidden');
+    },
+
+    saveRestock: function() {
+        const barcode = document.getElementById('restockSelectedBarcode').value;
+        const qty = parseInt(document.getElementById('restockQty').value) || 0;
+        const priceBuy = parseInt(document.getElementById('restockPriceBuy').value) || 0;
+        const expired = document.getElementById('restockExpired').value.trim();
+
+        if (!barcode) return Swal.fire('Error', 'Silakan pilih produk terlebih dahulu!', 'warning');
+        if (qty <= 0) return Swal.fire('Error', 'Jumlah stok masuk harus lebih dari 0!', 'warning');
+        if (priceBuy <= 0) return Swal.fire('Error', 'Harga beli modal harus lebih dari 0!', 'warning');
+
+        if (expired) {
+            const dateRegex = /^\d{2}\/\d{2}\/\d{4}$/;
+            if (!dateRegex.test(expired)) {
+                return Swal.fire('Error', 'Format Tanggal Expired wajib DD/MM/YYYY! (Cth: 31/12/2026)', 'error');
+            }
+        }
+
+        // Cari produk lokal untuk diupdate
+        const p = this.state.products.find(x => compareBarcode(x.Barcode_ID, barcode));
+        if (p) {
+            p.Stok = (parseInt(p.Stok) || 0) + qty;
+            p.Status = 'Ready';
+            // Update harga beli default di data produk jika harga belinya berubah
+            p.Harga_Beli = priceBuy;
+            p.Harga_Modal = priceBuy;
+        }
+
+        const restockData = {
+            id: 'RESTOCK-' + Date.now(),
+            Barcode_ID: barcode,
+            qty: qty,
+            priceBuy: priceBuy,
+            expired: expired
+        };
+
+        // Antrekan sinkronisasi ke sheet StokBatch
+        this.state.syncQueue.push({ type: 'restock', data: restockData });
+        
+        this.saveData();
+        this.closeRestockForm();
+        this.renderProductList();
+        this.syncData();
+        Swal.fire('Berhasil', 'Stok baru berhasil ditambahkan!', 'success');
+    },
+
+    startRestockScanner: function() {
+        const reader = document.getElementById('restockScannerReader');
+        const btn = document.getElementById('scanRestockBarcodeBtn');
+        
+        if (!reader.classList.contains('hidden')) {
+            this.stopRestockScanner();
+            return;
+        }
+        
+        reader.classList.remove('hidden');
+        this.state.restockScanner = new Html5Qrcode("restockScannerReader");
+        
+        const readerWidth = reader.clientWidth || 300;
+        const boxSize = Math.floor(Math.min(readerWidth * 0.8, 280));
+        const config = { 
+            fps: 15, 
+            qrbox: { width: boxSize, height: boxSize }
+        };
+        
+        const onScanSuccess = (text) => {
+            playBeep();
+            if ("vibrate" in navigator) navigator.vibrate([100, 50, 100]);
+            
+            // Cari produk berdasarkan barcode yang discan
+            const product = this.state.products.find(x => compareBarcode(x.Barcode_ID, text));
+            if (product) {
+                this.selectRestockProduct(product);
+                Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: `Produk: ${product.Nama_Camilan}`, showConfirmButton: false, timer: 1500 });
+            } else {
+                Swal.fire('Gagal', `Barcode "${text}" belum terdaftar! Silakan daftarkan produk baru terlebih dahulu.`, 'warning');
+            }
+            this.stopRestockScanner();
+        };
+        
+        this.state.restockScanner.start({ facingMode: "environment" }, config, onScanSuccess, (err) => {})
+        .then(() => {
+            btn.classList.replace('btn-secondary', 'btn-danger');
+            btn.innerHTML = '<i class="fas fa-times"></i>';
+        }).catch(err => {
+            // Fallback kamera depan
+            this.state.restockScanner.start({ facingMode: "user" }, config, onScanSuccess, (err) => {})
+            .then(() => {
+                btn.classList.replace('btn-secondary', 'btn-danger');
+                btn.innerHTML = '<i class="fas fa-times"></i>';
+            }).catch(e => {
+                Swal.fire('Error', 'Gagal menyalakan kamera.', 'error');
+                reader.classList.add('hidden');
+            });
+        });
+    },
+
+    stopRestockScanner: function() {
+        const btn = document.getElementById('scanRestockBarcodeBtn');
+        if(this.state.restockScanner) {
+            this.state.restockScanner.stop().then(() => {
+                document.getElementById('restockScannerReader').classList.add('hidden');
+                btn.classList.replace('btn-danger', 'btn-secondary');
+                btn.innerHTML = '<i class="fas fa-camera"></i>';
+                this.state.restockScanner = null;
+            }).catch(() => {
+                document.getElementById('restockScannerReader').classList.add('hidden');
+                btn.classList.replace('btn-danger', 'btn-secondary');
+                btn.innerHTML = '<i class="fas fa-camera"></i>';
+                this.state.restockScanner = null;
+            });
+        }
+    },
+
     closeProductForm: function() {
         this.stopProductScanner();
         document.getElementById('productFormOverlay').classList.add('hidden');
