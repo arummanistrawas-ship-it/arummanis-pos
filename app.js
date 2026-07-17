@@ -1079,12 +1079,31 @@ const app = {
         Swal.fire({ title: 'Menghubungkan ke Printer...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
         const server = await device.gatt.connect();
         
-        const services = await server.getPrimaryServices();
         let printChar = null;
-        for (const s of services) {
-            const chars = await s.getCharacteristics();
-            printChar = chars.find(c => c.properties.write || c.properties.writeWithoutResponse);
-            if (printChar) break;
+        const knownServices = ['000018f0-0000-1000-8000-00805f9b34fb', 'e7810a71-73ae-499d-8c15-faa9aef0c3f2', '0000fee7-0000-1000-8000-00805f9b34fb'];
+        
+        // Fast-path: Coba dapatkan primary service yang dikenal secara langsung (Sangat cepat <1 detik)
+        for (const serviceUuid of knownServices) {
+            try {
+                const service = await server.getPrimaryService(serviceUuid);
+                const chars = await service.getCharacteristics();
+                printChar = chars.find(c => c.properties.write || c.properties.writeWithoutResponse);
+                if (printChar) break;
+            } catch (e) {
+                // Lanjut ke UUID berikutnya jika service tidak ada
+                continue;
+            }
+        }
+        
+        // Slow-path fallback: Jika fast-path gagal, scan seluruh primary service (kompatibilitas 100% printer lain)
+        if (!printChar) {
+            console.log("Fast-path Bluetooth gagal, memindai seluruh service...");
+            const services = await server.getPrimaryServices();
+            for (const s of services) {
+                const chars = await s.getCharacteristics();
+                printChar = chars.find(c => c.properties.write || c.properties.writeWithoutResponse);
+                if (printChar) break;
+            }
         }
         
         if (!printChar) throw new Error('Karakteristik Bluetooth untuk Print tidak ditemukan.');
