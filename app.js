@@ -1049,42 +1049,42 @@ const app = {
             const ESC = '\x1B'; const textBoldOn = ESC + 'E\x01'; const textBoldOff = ESC + 'E\x00';
             let txt = ESC + '@' + ESC + 'a\x00'; // Set default left alignment secara eksplisit
             
-            // Header struk (Dibuat center manual dengan lebar 30 karakter + 1 spasi margin)
-            txt += textBoldOn + " " + makeCenterRow("ARUMMANIS", 30) + textBoldOff;
-            txt += " " + makeCenterRow("Camilan Manis & Gurih", 30);
-            txt += " ------------------------------\n"; // 1 spasi + 30 strip
+            // Header struk (Dibuat center manual dengan lebar 28 karakter + 3 spasi margin untuk mengimbangi pergeseran fisik printer)
+            txt += textBoldOn + "   " + makeCenterRow("ARUMMANIS", 28) + textBoldOff;
+            txt += "   " + makeCenterRow("Camilan Manis & Gurih", 28);
+            txt += "   ----------------------------\n"; // 3 spasi + 28 strip
             
             // Metadata transaksi
-            txt += ` No : ${trx.id}\n Tgl: ${new Date(trx.timestamp).toLocaleString('id-ID')}\n Pel: ${trx.customer}\n`;
-            txt += " ------------------------------\n";
+            txt += `   No : ${trx.id}\n   Tgl: ${new Date(trx.timestamp).toLocaleString('id-ID')}\n   Pel: ${trx.customer}\n`;
+            txt += "   ----------------------------\n";
             
             // Daftar barang belanjaan
             trx.items.forEach(i => {
-                txt += ` ${i.Nama_Camilan}\n`;
+                txt += `   ${i.Nama_Camilan}\n`;
                 const left = `${i.qty} x ${formatRupiah(i.editPrice)}`;
                 const right = formatRupiah(i.qty * i.editPrice);
-                txt += " " + makePrintRow(left, right, 30);
+                txt += "   " + makePrintRow(left, right, 28);
             });
-            txt += " ------------------------------\n";
+            txt += "   ----------------------------\n";
             
             // Ringkasan Total
-            txt += " " + makePrintRow("Subtotal:", formatRupiah(trx.subtotal), 30);
-            txt += " " + makePrintRow("Diskon:", "-" + formatRupiah(trx.discount || 0), 30);
-            txt += textBoldOn + " " + makePrintRow("TOTAL:", formatRupiah(trx.total), 30) + textBoldOff;
-            txt += " ------------------------------\n";
+            txt += "   " + makePrintRow("Subtotal:", formatRupiah(trx.subtotal), 28);
+            txt += "   " + makePrintRow("Diskon:", "-" + formatRupiah(trx.discount || 0), 28);
+            txt += textBoldOn + "   " + makePrintRow("TOTAL:", formatRupiah(trx.total), 28) + textBoldOff;
+            txt += "   ----------------------------\n";
             
             // Info Pembayaran
-            txt += " " + makePrintRow(`Bayar (${trx.method}):`, formatRupiah(trx.cash || 0), 30);
-            txt += " " + makePrintRow("Kembali:", formatRupiah(trx.change || 0), 30);
+            txt += "   " + makePrintRow(`Bayar (${trx.method}):`, formatRupiah(trx.cash || 0), 28);
+            txt += "   " + makePrintRow("Kembali:", formatRupiah(trx.change || 0), 28);
             
             if(trx.status === 'Belum Lunas') {
-                txt += " ------------------------------\n";
-                txt += textBoldOn + "  " + makeCenterRow("STATUS: KASBON (BELUM LUNAS)", 28) + textBoldOff;
+                txt += "   ----------------------------\n";
+                txt += textBoldOn + "   " + makeCenterRow("STATUS: KASBON (BELUM LUNAS)", 28) + textBoldOff;
             }
             
             // Footer
-            txt += " ------------------------------\n";
-            txt += " " + makeCenterRow("Terima Kasih!", 30) + "\n\n\n";
+            txt += "   ----------------------------\n";
+            txt += "   " + makeCenterRow("Terima Kasih!", 28) + "\n\n\n";
 
             const data = new TextEncoder().encode(txt);
             for (let i = 0; i < data.length; i += 256) {
