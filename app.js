@@ -57,6 +57,7 @@ const app = {
         this.setupNetworkListeners();
         await this.loadData();
         this.bindEvents();
+        this.preloadBluetoothDevice(); // Preload paired bluetooth devices di background
         
         // Baca view dari hash URL untuk mendukung refresh halaman langsung ke menu aktif
         const initialView = window.location.hash ? window.location.hash.substring(1) : 'dashboard';
@@ -1025,27 +1026,30 @@ const app = {
         window.open(`https://wa.me/?text=${encoded}`, '_blank');
     },
 
-    getBluetoothDevice: async function() {
-        // 1. Gunakan device yang sudah tersimpan di state jika ada
-        if (this.state.bluetoothDevice) {
-            return this.state.bluetoothDevice;
-        }
-
-        // 2. Coba ambil device yang sudah pernah di-pair sebelumnya (Chrome 85+)
+    preloadBluetoothDevice: async function() {
+        // Coba ambil device yang sudah pernah di-pair sebelumnya saat page load
         if (navigator.bluetooth && navigator.bluetooth.getDevices) {
             try {
                 const devices = await navigator.bluetooth.getDevices();
                 if (devices && devices.length > 0) {
                     this.state.bluetoothDevice = devices[0];
                     this.setupBluetoothDisconnectListener(devices[0]);
-                    return devices[0];
+                    console.log("Preloaded paired Bluetooth device:", devices[0].name);
                 }
             } catch (err) {
-                console.error("Gagal mengambil paired devices:", err);
+                console.error("Gagal preloading paired devices:", err);
             }
         }
+    },
 
-        // 3. Jika belum ada, minta user pairing lewat popup browser (hanya sekali pertama)
+    getBluetoothDevice: async function() {
+        // 1. Gunakan device yang sudah tersimpan di state (baik dari preload maupun pairing sebelumnya)
+        if (this.state.bluetoothDevice) {
+            return this.state.bluetoothDevice;
+        }
+
+        // 2. Jika belum ada, minta user pairing lewat popup browser. 
+        // Wajib dipanggil sinkron di awal user gesture click (tanpa await sebelumnya) agar tidak diblokir browser.
         if (!navigator.bluetooth) throw new Error('Web Bluetooth tidak didukung di browser ini.');
         const device = await navigator.bluetooth.requestDevice({
             acceptAllDevices: true,
