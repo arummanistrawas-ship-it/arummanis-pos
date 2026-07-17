@@ -2,7 +2,21 @@
 const GAS_URL = 'https://script.google.com/macros/s/AKfycbxShfwNUtXVeZB_hReUyB8y5oRplJp2y2j-p-eoyiOmZcx_Ad6dhQZFlMIEsD2xgEMc-Q/exec';
 
 // Utility format uang
-const formatRupiah = (number) => new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(parseFloat(number) || 0);
+const formatRupiah = (number) => {
+    const val = new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(parseFloat(number) || 0);
+    return val.replace(/\s+/g, ' '); // Ganti NBSP (No-Break Space) bawaan Intl formatter dengan spasi biasa untuk mencegah karakter corrupt (┬á) di printer thermal
+};
+
+// Helper untuk merapikan baris struk belanja (kanan-kiri pas untuk 58mm printer / 32 kolom)
+const makePrintRow = (left, right, maxLen = 32) => {
+    const leftStr = left.toString();
+    const rightStr = right.toString();
+    const spacesNeeded = maxLen - leftStr.length - rightStr.length;
+    if (spacesNeeded > 0) {
+        return leftStr + ' '.repeat(spacesNeeded) + rightStr + '\n';
+    }
+    return leftStr + ' ' + rightStr + '\n';
+};
 
 // Helper pembanding barcode tahan crash tipe data (String/Number) dan Null/Undefined
 const compareBarcode = (a, b) => {
@@ -1030,13 +1044,22 @@ const app = {
             txt += `No : ${trx.id}\nTgl: ${new Date(trx.timestamp).toLocaleString('id-ID')}\nPel: ${trx.customer}\n--------------------------------\n`;
             
             trx.items.forEach(i => {
-                txt += `${i.Nama_Camilan}\n${i.qty} x ${formatRupiah(i.editPrice)} = ${formatRupiah(i.qty * i.editPrice)}\n`;
+                txt += `${i.Nama_Camilan}\n`;
+                const left = `${i.qty} x ${formatRupiah(i.editPrice)}`;
+                const right = formatRupiah(i.qty * i.editPrice);
+                txt += makePrintRow(left, right);
             });
             txt += `--------------------------------\n`;
-            txt += `Subtotal: ${formatRupiah(trx.subtotal)}\nDiskon: -${formatRupiah(trx.discount)}\n`;
-            txt += textBoldOn + `TOTAL: ${formatRupiah(trx.total)}\n` + textBoldOff;
-            txt += `Bayar(${trx.method}): ${formatRupiah(trx.cash || 0)}\nKembali: ${formatRupiah(trx.change || 0)}\n`;
-            if(trx.status === 'Belum Lunas') txt += `STATUS: BELUM LUNAS (KASBON)\n`;
+            txt += makePrintRow("Subtotal:", formatRupiah(trx.subtotal));
+            txt += makePrintRow("Diskon:", "-" + formatRupiah(trx.discount || 0));
+            txt += textBoldOn + makePrintRow("TOTAL:", formatRupiah(trx.total)) + textBoldOff;
+            txt += `--------------------------------\n`;
+            txt += makePrintRow(`Bayar (${trx.method}):`, formatRupiah(trx.cash || 0));
+            txt += makePrintRow("Kembali:", formatRupiah(trx.change || 0));
+            if(trx.status === 'Belum Lunas') {
+                txt += `--------------------------------\n`;
+                txt += textBoldOn + "STATUS: KASBON (BELUM LUNAS)\n" + textBoldOff;
+            }
             txt += `--------------------------------\n` + ESC + 'a\x01' + "Terima Kasih!\n\n\n";
 
             const data = new TextEncoder().encode(txt);
