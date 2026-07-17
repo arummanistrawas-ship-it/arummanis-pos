@@ -26,6 +26,30 @@ const makeCenterRow = (text, maxLen = 32) => {
     return ' '.repeat(spacesNeeded) + cleanText + '\n';
 };
 
+// Efek suara scanner bip konvensional menggunakan Web Audio API (Bekerja offline, latency 0ms)
+const playBeep = () => {
+    try {
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        if (!AudioContext) return;
+        const ctx = new AudioContext();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        
+        osc.type = 'sine'; // Suara sine wave jernih
+        osc.frequency.setValueAtTime(1000, ctx.currentTime); // Frekuensi bip tinggi kasir (1000 Hz)
+        gain.gain.setValueAtTime(0.2, ctx.currentTime); // Volume sedang
+        gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.12); // Pudar di akhir durasi 120ms
+        
+        osc.start(ctx.currentTime);
+        osc.stop(ctx.currentTime + 0.12);
+    } catch (e) {
+        console.error("Gagal memutar bunyi bip:", e);
+    }
+};
+
 // Helper pembanding barcode tahan crash tipe data (String/Number) dan Null/Undefined
 const compareBarcode = (a, b) => {
     if (a === null || a === undefined || b === null || b === undefined) return false;
@@ -764,6 +788,7 @@ const app = {
         };
         
         const onScanSuccess = (text) => {
+            playBeep();
             if ("vibrate" in navigator) navigator.vibrate([100, 50, 100]);
             document.getElementById('prodFormBarcode').value = text;
             this.stopProductScanner();
@@ -906,6 +931,7 @@ const app = {
             this.state.lastScannedBarcode = text;
             this.state.lastScannedTime = now;
             
+            playBeep();
             if ("vibrate" in navigator) navigator.vibrate(80);
             
             const p = this.state.products.find(x => compareBarcode(x.Barcode_ID, text));
