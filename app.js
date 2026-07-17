@@ -262,7 +262,10 @@ const app = {
             else cashSection.classList.add('hidden');
             this.calculateChange();
         });
-        document.getElementById('checkoutCash').addEventListener('input', () => this.calculateChange());
+        document.getElementById('checkoutCash').addEventListener('input', () => {
+            this.calculateChange();
+            this.updateActiveQuickCashBtn(null); // Matikan status aktif tombol cepat jika diinput manual
+        });
         document.getElementById('confirmCheckoutBtn').addEventListener('click', () => this.processTransaction());
 
         document.getElementById('printReceiptBtn').addEventListener('click', () => this.printReceipt());
@@ -442,14 +445,59 @@ const app = {
 
     // --- Checkout Logic ---
     prepareCheckout: function() {
-        document.getElementById('checkoutTotal').textContent = formatRupiah(this.state.tempTotal);
+        const total = this.state.tempTotal;
+        document.getElementById('checkoutTotal').textContent = formatRupiah(total);
         document.getElementById('checkoutCustomer').value = '';
         document.getElementById('checkoutCash').value = '';
         document.getElementById('checkoutChange').textContent = 'Rp 0';
         document.getElementById('checkoutChange').className = 'success-text';
         document.getElementById('checkoutMethod').value = 'Tunai';
         document.getElementById('cashInputSection').classList.remove('hidden');
+        
+        // Render tombol nominal uang bulat cepat secara dinamis
+        const quickCashBox = document.getElementById('quickCashContainer');
+        quickCashBox.innerHTML = '';
+        
+        // 1. Tambahkan tombol Uang Pas jika total belanja > 0
+        if (total > 0) {
+            const btnPas = document.createElement('button');
+            btnPas.className = 'quick-cash-btn';
+            btnPas.textContent = 'Uang Pas';
+            btnPas.addEventListener('click', () => {
+                document.getElementById('checkoutCash').value = total;
+                this.calculateChange();
+                this.updateActiveQuickCashBtn(btnPas);
+            });
+            quickCashBox.appendChild(btnPas);
+        }
+        
+        // 2. Tambahkan tombol nominal bulat: 10k, 20k, 30k, 50k, 60k, 70k, 80k, 90k, 100k
+        const nominals = [10000, 20000, 30000, 50000, 60000, 70000, 80000, 90000, 100000];
+        nominals.forEach(nom => {
+            // Tampilkan hanya nominal yang bernilai lebih besar atau sama dengan total belanja
+            if (nom >= total) {
+                const btnNom = document.createElement('button');
+                btnNom.className = 'quick-cash-btn';
+                btnNom.textContent = nom.toLocaleString('id-ID');
+                btnNom.addEventListener('click', () => {
+                    document.getElementById('checkoutCash').value = nom;
+                    this.calculateChange();
+                    this.updateActiveQuickCashBtn(btnNom);
+                });
+                quickCashBox.appendChild(btnNom);
+            }
+        });
+        
         this.navigate('checkout');
+    },
+
+    updateActiveQuickCashBtn: function(activeBtn) {
+        document.querySelectorAll('.quick-cash-btn').forEach(btn => {
+            btn.classList.remove('active');
+        });
+        if (activeBtn) {
+            activeBtn.classList.add('active');
+        }
     },
 
     calculateChange: function() {
