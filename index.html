@@ -144,7 +144,7 @@
             <!-- 3. CHECKOUT MODAL -->
             <section id="view-checkout" class="view hidden">
                 <div class="card">
-                    <h2 class="text-center">Proses Pembayaran</h2>
+                    <h2 class="text-center" id="checkoutViewTitle">Proses Pembayaran</h2>
                     <h1 class="total-price text-center mb-1" id="checkoutTotal">Rp 0</h1>
                     
                     <div class="form-group">
@@ -176,7 +176,7 @@
                     </div>
                     
                     <div class="action-buttons mt-1">
-                        <button onclick="app.navigate('pos')" class="btn btn-secondary">Batal</button>
+                        <button onclick="app.cancelCheckout()" class="btn btn-secondary">Batal</button>
                         <button id="confirmCheckoutBtn" class="btn btn-success">Simpan Transaksi</button>
                     </div>
                 </div>

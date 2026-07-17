@@ -73,7 +73,9 @@ const app = {
         tempTotal: 0,
         productScanner: null,
         bluetoothDevice: null,
-        bluetoothChar: null
+        bluetoothChar: null,
+        checkoutMode: 'new',
+        repaymentTransactionId: null
     },
 
     init: async function() {
@@ -275,7 +277,13 @@ const app = {
             this.calculateChange();
             this.updateActiveQuickCashBtn(null); // Matikan status aktif tombol cepat jika diinput manual
         });
-        document.getElementById('confirmCheckoutBtn').addEventListener('click', () => this.processTransaction());
+        document.getElementById('confirmCheckoutBtn').addEventListener('click', () => {
+            if (this.state.checkoutMode === 'repayment') {
+                this.processRepayment();
+            } else {
+                this.processTransaction();
+            }
+        });
 
         document.getElementById('printReceiptBtn').addEventListener('click', () => this.printReceipt());
         document.getElementById('editTransactionBtn').addEventListener('click', () => this.editLastTransaction());
@@ -455,24 +463,41 @@ const app = {
     // --- Checkout Logic ---
     prepareCheckout: function() {
         const total = this.state.tempTotal;
+        this.state.checkoutMode = 'new';
+        this.state.repaymentTransactionId = null;
+
+        // Set judul kembali ke Proses Pembayaran
+        document.getElementById('checkoutViewTitle').textContent = 'Proses Pembayaran';
         document.getElementById('checkoutTotal').textContent = formatRupiah(total);
-        document.getElementById('checkoutCustomer').value = '';
+        
+        // Re-enable input nama pelanggan
+        const custInput = document.getElementById('checkoutCustomer');
+        custInput.value = '';
+        custInput.disabled = false;
+        
         document.getElementById('checkoutCash').value = '';
         document.getElementById('checkoutChange').textContent = 'Rp 0';
         document.getElementById('checkoutChange').className = 'success-text';
+
+        // Kembalikan opsi metode pembayaran lengkap
+        const methodSelect = document.getElementById('checkoutMethod');
+        methodSelect.innerHTML = `
+            <option value="Tunai">Tunai</option>
+            <option value="Transfer">Transfer Bank</option>
+            <option value="QRIS">QRIS</option>
+            <option value="Kasbon">Belum Lunas (Kasbon)</option>
+        `;
+        methodSelect.value = 'Tunai';
+        
+        const cashSection = document.getElementById('cashInputSection');
+        cashSection.classList.remove('hidden');
+        cashSection.querySelector('label').textContent = "Uang Tunai Diterima (Rp)";
         
         // Reset tombol confirm checkout dari status loading
         const confirmBtn = document.getElementById('confirmCheckoutBtn');
         confirmBtn.disabled = false;
         confirmBtn.textContent = 'Simpan Transaksi';
 
-        const methodEl = document.getElementById('checkoutMethod');
-        methodEl.value = 'Tunai';
-        
-        const cashSection = document.getElementById('cashInputSection');
-        cashSection.classList.remove('hidden');
-        cashSection.querySelector('label').textContent = "Uang Tunai Diterima (Rp)";
-        
         // Render tombol nominal uang bulat cepat secara dinamis
         const quickCashBox = document.getElementById('quickCashContainer');
         quickCashBox.innerHTML = '';
@@ -510,6 +535,150 @@ const app = {
         this.navigate('checkout');
     },
 
+    prepareRepayment: function(trxId) {
+        const trx = this.state.transactions.find(x => x.id === trxId);
+        if (!trx) return;
+
+        this.state.checkoutMode = 'repayment';
+        this.state.repaymentTransactionId = trxId;
+
+        const currentDebt = trx.remainingDebt !== undefined ? trx.remainingDebt : Math.max(0, trx.total - (trx.cash || 0));
+
+        // Ubah judul checkout & sisa hutang yang harus dibayar
+        document.getElementById('checkoutViewTitle').textContent = 'Pelunasan Kasbon';
+        document.getElementById('checkoutTotal').textContent = formatRupiah(currentDebt);
+        
+        // Kunci input nama pelanggan (read-only)
+        const custInput = document.getElementById('checkoutCustomer');
+        custInput.value = trx.customer;
+        custInput.disabled = true;
+        
+        document.getElementById('checkoutCash').value = '';
+        document.getElementById('checkoutChange').textContent = 'Rp 0';
+        document.getElementById('checkoutChange').className = 'success-text';
+
+        // Sembunyikan opsi "Kasbon" saat pelunasan hutang (tidak masuk akal mencicil hutang dengan hutang)
+        const methodSelect = document.getElementById('checkoutMethod');
+        methodSelect.innerHTML = `
+            <option value="Tunai">Tunai</option>
+            <option value="Transfer">Transfer Bank</option>
+            <option value="QRIS">QRIS</option>
+        `;
+        methodSelect.value = 'Tunai';
+        
+        const cashSection = document.getElementById('cashInputSection');
+        cashSection.classList.remove('hidden');
+        cashSection.querySelector('label').textContent = "Jumlah Pembayaran / Cicilan (Rp)";
+
+        // Reset tombol confirm
+        const confirmBtn = document.getElementById('confirmCheckoutBtn');
+        confirmBtn.disabled = false;
+        confirmBtn.textContent = 'Simpan Pembayaran';
+
+        // Render tombol nominal cepat berdasarkan sisa hutang
+        const quickCashBox = document.getElementById('quickCashContainer');
+        quickCashBox.innerHTML = '';
+        
+        // 1. Tombol Bayar Lunas (Uang Pas)
+        if (currentDebt > 0) {
+            const btnPas = document.createElement('button');
+            btnPas.className = 'quick-cash-btn';
+            btnPas.textContent = 'Bayar Lunas';
+            btnPas.addEventListener('click', () => {
+                document.getElementById('checkoutCash').value = currentDebt;
+                this.calculateChange();
+                this.updateActiveQuickCashBtn(btnPas);
+            });
+            quickCashBox.appendChild(btnPas);
+        }
+        
+        // 2. Tombol nominal bulat >= sisa hutang
+        const nominals = [10000, 20000, 30000, 50000, 60000, 70000, 80000, 90000, 100000];
+        nominals.forEach(nom => {
+            if (nom >= currentDebt) {
+                const btnNom = document.createElement('button');
+                btnNom.className = 'quick-cash-btn';
+                btnNom.textContent = nom.toLocaleString('id-ID');
+                btnNom.addEventListener('click', () => {
+                    document.getElementById('checkoutCash').value = nom;
+                    this.calculateChange();
+                    this.updateActiveQuickCashBtn(btnNom);
+                });
+                quickCashBox.appendChild(btnNom);
+            }
+        });
+
+        this.navigate('checkout');
+    },
+
+    cancelCheckout: function() {
+        if (this.state.checkoutMode === 'repayment') {
+            this.navigate('debt');
+        } else {
+            this.navigate('pos');
+        }
+    },
+
+    processRepayment: function() {
+        const method = document.getElementById('checkoutMethod').value;
+        const cash = parseInt(document.getElementById('checkoutCash').value) || 0;
+        
+        if (cash <= 0) {
+            Swal.fire('Gagal', 'Nominal pembayaran tidak boleh kosong atau 0!', 'warning');
+            return;
+        }
+
+        const trx = this.state.transactions.find(x => x.id === this.state.repaymentTransactionId);
+        if (!trx) return;
+
+        const currentDebt = trx.remainingDebt !== undefined ? trx.remainingDebt : Math.max(0, trx.total - (trx.cash || 0));
+
+        // Mencegah double submit
+        const confirmBtn = document.getElementById('confirmCheckoutBtn');
+        if (confirmBtn.disabled) return;
+        confirmBtn.disabled = true;
+        confirmBtn.textContent = 'Memproses...';
+
+        // Hitung nominal pembayaran aktual (tidak boleh melebihi sisa hutang)
+        const paymentAmount = Math.min(cash, currentDebt);
+        const newDebt = currentDebt - paymentAmount;
+
+        // Hitung kembalian tunai jika bayar tunai lebih dari sisa hutang
+        const changeAmount = method === 'Tunai' ? Math.max(0, cash - currentDebt) : 0;
+
+        // Update data transaksi lokal
+        trx.cash = (trx.cash || 0) + paymentAmount;
+        trx.remainingDebt = newDebt;
+        trx.change = method === 'Tunai' ? changeAmount : -newDebt;
+        trx.status = newDebt === 0 ? 'Lunas' : 'Belum Lunas';
+
+        // Catat ke syncQueue
+        this.state.syncQueue.push({ 
+            type: 'update_status', 
+            data: { 
+                id: trx.id, 
+                status: trx.status,
+                cash: trx.cash,
+                remainingDebt: trx.remainingDebt
+            } 
+        });
+
+        this.saveData();
+        this.syncData();
+
+        Swal.fire({
+            title: 'Pembayaran Berhasil',
+            text: newDebt === 0 
+                ? 'Kasbon telah LUNAS!' 
+                : `Pembayaran sebesar ${formatRupiah(paymentAmount)} dicatat. Sisa hutang: ${formatRupiah(newDebt)}`,
+            icon: 'success',
+            timer: 2000,
+            showConfirmButton: false
+        }).then(() => {
+            this.showReceipt(trx);
+        });
+    },
+
     updateActiveQuickCashBtn: function(activeBtn) {
         document.querySelectorAll('.quick-cash-btn').forEach(btn => {
             btn.classList.remove('active');
@@ -525,6 +694,34 @@ const app = {
         const changeEl = document.getElementById('checkoutChange');
         const changeLabelEl = changeEl.previousElementSibling; // Span berlabel "Kembalian:"
         
+        if (this.state.checkoutMode === 'repayment') {
+            const trx = this.state.transactions.find(x => x.id === this.state.repaymentTransactionId);
+            if (!trx) return;
+            const currentDebt = trx.remainingDebt !== undefined ? trx.remainingDebt : Math.max(0, trx.total - (trx.cash || 0));
+
+            if (method === 'Tunai') {
+                const diff = cash - currentDebt;
+                if (diff < 0) {
+                    // Masih kurang (dicicil)
+                    changeEl.textContent = formatRupiah(Math.abs(diff));
+                    changeEl.className = 'danger-text';
+                    if (changeLabelEl) changeLabelEl.textContent = 'Sisa Hutang:';
+                } else {
+                    // Lunas & ada kembalian tunai
+                    changeEl.textContent = formatRupiah(diff);
+                    changeEl.className = 'success-text';
+                    if (changeLabelEl) changeLabelEl.textContent = 'Kembalian:';
+                }
+            } else {
+                // Transfer / QRIS (langsung dikurangi tanpa hitung kembalian fisik)
+                const remaining = Math.max(0, currentDebt - cash);
+                changeEl.textContent = formatRupiah(remaining);
+                changeEl.className = remaining > 0 ? 'danger-text' : 'success-text';
+                if (changeLabelEl) changeLabelEl.textContent = remaining > 0 ? 'Sisa Hutang:' : 'Kembalian:';
+            }
+            return;
+        }
+
         if (method !== 'Tunai' && method !== 'Kasbon') {
             changeEl.textContent = 'Rp 0';
             changeEl.className = 'success-text';
@@ -747,69 +944,7 @@ const app = {
     },
 
     markAsPaid: function(id) {
-        const t = this.state.transactions.find(x => x.id === id);
-        if(!t) return;
-
-        const currentDebt = t.remainingDebt !== undefined ? t.remainingDebt : Math.max(0, t.total - (t.cash || 0));
-        
-        Swal.fire({
-            title: 'Pelunasan Kasbon',
-            html: `
-                <div style="text-align: left; margin-bottom: 15px; font-size: 0.95rem;">
-                    <div style="margin-bottom: 5px;"><strong>ID Transaksi:</strong> ${t.id}</div>
-                    <div style="margin-bottom: 5px;"><strong>Nama Pelanggan:</strong> ${t.customer}</div>
-                    <div style="margin-bottom: 10px;"><strong>Sisa Hutang Saat Ini:</strong> <span class="danger-text" style="font-weight:bold;">${formatRupiah(currentDebt)}</span></div>
-                </div>
-            `,
-            input: 'number',
-            inputLabel: 'Masukkan Jumlah Pembayaran (Rp)',
-            inputPlaceholder: 'Cth: ' + currentDebt,
-            inputValue: currentDebt, // Prefill dengan uang pas pelunasan
-            showCancelButton: true,
-            confirmButtonText: 'Simpan Pembayaran',
-            cancelButtonText: 'Batal',
-            inputValidator: (value) => {
-                if (!value || parseInt(value) <= 0) {
-                    return 'Jumlah pembayaran tidak valid!';
-                }
-                if (parseInt(value) > currentDebt) {
-                    return `Pembayaran tidak boleh melebihi sisa hutang (${formatRupiah(currentDebt)})!`;
-                }
-            }
-        }).then(res => {
-            if(res.isConfirmed) {
-                const paymentAmount = parseInt(res.value) || 0;
-                const newDebt = currentDebt - paymentAmount;
-                
-                t.cash = (t.cash || 0) + paymentAmount;
-                t.remainingDebt = newDebt;
-                t.change = -newDebt; // Update kekurangan di kolom Kembalian
-                t.status = newDebt === 0 ? 'Lunas' : 'Belum Lunas';
-                
-                // Catat ke syncQueue
-                this.state.syncQueue.push({ 
-                    type: 'update_status', 
-                    data: { 
-                        id: t.id, 
-                        status: t.status,
-                        cash: t.cash,
-                        remainingDebt: t.remainingDebt
-                    } 
-                });
-                
-                this.saveData();
-                this.renderTransactionList('Kasbon', 'debtListContainer', 'searchDebt');
-                this.syncData();
-                
-                Swal.fire(
-                    'Berhasil', 
-                    newDebt === 0 
-                        ? 'Kasbon telah LUNAS!' 
-                        : `Pembayaran sebesar ${formatRupiah(paymentAmount)} dicatat. Sisa hutang: ${formatRupiah(newDebt)}`, 
-                    'success'
-                );
-            }
-        });
+        this.prepareRepayment(id);
     },
 
     // --- Product Management ---
