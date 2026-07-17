@@ -203,13 +203,37 @@ function updateTransactionStatus(data) {
   var table = sheet.getDataRange().getDisplayValues();
   var headers = table[0];
   var idCol = headers.indexOf("ID");
-  var statusCol = headers.indexOf("Status");
   
-  if (idCol > -1 && statusCol > -1) {
+  var statusCol = headers.indexOf("Status");
+  if (statusCol === -1) statusCol = 10; // Kolom ke-11
+  
+  var cashCol = headers.indexOf("Uang_Bayar");
+  if (cashCol === -1) cashCol = headers.indexOf("Cash");
+  if (cashCol === -1) cashCol = 8; // Kolom ke-9
+  
+  var changeCol = headers.indexOf("Kembalian");
+  if (changeCol === -1) changeCol = headers.indexOf("Change");
+  if (changeCol === -1) changeCol = 9; // Kolom ke-10
+  
+  if (idCol > -1) {
     for (var i = 1; i < table.length; i++) {
       if (table[i][idCol] === data.id) {
+        // 1. Update Status (Lunas / Belum Lunas)
         sheet.getRange(i + 1, statusCol + 1).setValue(data.status);
-        return successResponse('Status diperbarui');
+        
+        // 2. Update Total Uang Bayar yang diterima
+        if (data.cash !== undefined) {
+          sheet.getRange(i + 1, cashCol + 1).setValue(data.cash);
+        }
+        
+        // 3. Update Kolom Kembalian / Sisa Hutang (sisa hutang ditulis negatif)
+        if (data.remainingDebt !== undefined) {
+          sheet.getRange(i + 1, changeCol + 1).setValue(-data.remainingDebt);
+        } else if (data.status === 'Lunas') {
+          sheet.getRange(i + 1, changeCol + 1).setValue(0);
+        }
+        
+        return successResponse('Status transaksi diperbarui');
       }
     }
   }

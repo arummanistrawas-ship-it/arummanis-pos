@@ -258,8 +258,17 @@ const app = {
 
         document.getElementById('checkoutMethod').addEventListener('change', (e) => {
             const cashSection = document.getElementById('cashInputSection');
-            if (e.target.value === 'Tunai') cashSection.classList.remove('hidden');
-            else cashSection.classList.add('hidden');
+            const label = cashSection.querySelector('label');
+            if (e.target.value === 'Tunai' || e.target.value === 'Kasbon') {
+                cashSection.classList.remove('hidden');
+                if (e.target.value === 'Kasbon') {
+                    label.textContent = "Uang Muka / Bayar Sebagian (Rp)";
+                } else {
+                    label.textContent = "Uang Tunai Diterima (Rp)";
+                }
+            } else {
+                cashSection.classList.add('hidden');
+            }
             this.calculateChange();
         });
         document.getElementById('checkoutCash').addEventListener('input', () => {
@@ -451,8 +460,18 @@ const app = {
         document.getElementById('checkoutCash').value = '';
         document.getElementById('checkoutChange').textContent = 'Rp 0';
         document.getElementById('checkoutChange').className = 'success-text';
-        document.getElementById('checkoutMethod').value = 'Tunai';
-        document.getElementById('cashInputSection').classList.remove('hidden');
+        
+        // Reset tombol confirm checkout dari status loading
+        const confirmBtn = document.getElementById('confirmCheckoutBtn');
+        confirmBtn.disabled = false;
+        confirmBtn.textContent = 'Simpan Transaksi';
+
+        const methodEl = document.getElementById('checkoutMethod');
+        methodEl.value = 'Tunai';
+        
+        const cashSection = document.getElementById('cashInputSection');
+        cashSection.classList.remove('hidden');
+        cashSection.querySelector('label').textContent = "Uang Tunai Diterima (Rp)";
         
         // Render tombol nominal uang bulat cepat secara dinamis
         const quickCashBox = document.getElementById('quickCashContainer');
@@ -504,20 +523,31 @@ const app = {
         const cash = parseInt(document.getElementById('checkoutCash').value) || 0;
         const method = document.getElementById('checkoutMethod').value;
         const changeEl = document.getElementById('checkoutChange');
+        const changeLabelEl = changeEl.previousElementSibling; // Span berlabel "Kembalian:"
         
-        if (method !== 'Tunai') {
+        if (method !== 'Tunai' && method !== 'Kasbon') {
             changeEl.textContent = 'Rp 0';
             changeEl.className = 'success-text';
+            if (changeLabelEl) changeLabelEl.textContent = 'Kembalian:';
             return;
         }
 
-        const change = cash - this.state.tempTotal;
-        if (change < 0) {
-            changeEl.textContent = `Uang Kurang! (${formatRupiah(change)})`;
-            changeEl.className = 'danger-text';
+        if (method === 'Kasbon') {
+            const remaining = Math.max(0, this.state.tempTotal - cash);
+            changeEl.textContent = formatRupiah(remaining);
+            changeEl.className = remaining > 0 ? 'danger-text' : 'success-text';
+            if (changeLabelEl) changeLabelEl.textContent = 'Sisa Hutang:';
         } else {
-            changeEl.textContent = formatRupiah(change);
-            changeEl.className = 'success-text';
+            // Tunai
+            const change = cash - this.state.tempTotal;
+            if (change < 0) {
+                changeEl.textContent = `Uang Kurang! (${formatRupiah(change)})`;
+                changeEl.className = 'danger-text';
+            } else {
+                changeEl.textContent = formatRupiah(change);
+                changeEl.className = 'success-text';
+            }
+            if (changeLabelEl) changeLabelEl.textContent = 'Kembalian:';
         }
     },
 
@@ -535,6 +565,13 @@ const app = {
             return;
         }
 
+        // Mencegah klik ganda (race condition) yang memicu duplikasi transaksi Rp 0
+        const confirmBtn = document.getElementById('confirmCheckoutBtn');
+        if (confirmBtn.disabled) return;
+        confirmBtn.disabled = true;
+        confirmBtn.textContent = 'Memproses...';
+
+        const remainingDebt = method === 'Kasbon' ? Math.max(0, this.state.tempTotal - cash) : 0;
         const trx = {
             id: 'TRX-' + Date.now(),
             timestamp: new Date().toISOString(),
@@ -544,9 +581,10 @@ const app = {
             discount: this.state.tempDiscount,
             total: this.state.tempTotal,
             method: method,
-            cash: method === 'Tunai' ? cash : 0,
-            change: method === 'Tunai' ? (cash - this.state.tempTotal) : 0,
-            status: method === 'Kasbon' ? 'Belum Lunas' : 'Lunas'
+            cash: (method === 'Tunai' || method === 'Kasbon') ? cash : 0,
+            change: method === 'Tunai' ? (cash - this.state.tempTotal) : (method === 'Kasbon' ? -remainingDebt : 0),
+            remainingDebt: remainingDebt,
+            status: (method === 'Kasbon' && remainingDebt > 0) ? 'Belum Lunas' : 'Lunas'
         };
 
         // Update local stock
@@ -587,12 +625,16 @@ const app = {
             <hr>
         `;
         
-        trx.items.forEach(i => {
-            html += `
-                <div>${i.Nama_Camilan}</div>
-                <div class="r-row"><span>${i.qty} x ${formatRupiah(i.editPrice)}</span> <span>${formatRupiah(i.qty * i.editPrice)}</span></div>
-            `;
-        });
+        if (trx.items && trx.items.length > 0) {
+            trx.items.forEach(i => {
+                html += `
+                    <div>${i.Nama_Camilan}</div>
+                    <div class="r-row"><span>${i.qty} x ${formatRupiah(i.editPrice)}</span> <span>${formatRupiah(i.qty * i.editPrice)}</span></div>
+                `;
+            });
+        } else {
+            html += `<div style="text-align: center; color: #999; margin: 10px 0;">Tidak ada detail item (Hanya nominal transaksi)</div>`;
+        }
         
         html += `<hr>
             <div class="r-row"><span>Subtotal:</span> <span>${formatRupiah(trx.subtotal)}</span></div>
@@ -605,9 +647,16 @@ const app = {
         if (trx.method === 'Tunai') {
             html += `<div class="r-row"><span>Tunai:</span> <span>${formatRupiah(trx.cash)}</span></div>
                      <div class="r-row"><span>Kembali:</span> <span>${formatRupiah(trx.change)}</span></div>`;
-        }
-        if (trx.status === 'Belum Lunas') {
-            html += `<div class="r-row"><strong>STATUS:</strong> <strong class="danger-text">BELUM LUNAS</strong></div>`;
+        } else if (trx.method === 'Kasbon') {
+            const dp = trx.cash || 0;
+            const debt = trx.remainingDebt !== undefined ? trx.remainingDebt : Math.max(0, trx.total - dp);
+            if (dp > 0) {
+                html += `<div class="r-row"><span>Uang Muka (DP):</span> <span>${formatRupiah(dp)}</span></div>`;
+            }
+            html += `
+                <div class="r-row"><span>Sisa Hutang:</span> <span class="danger-text" style="font-weight:bold;">${formatRupiah(debt)}</span></div>
+                <div class="r-row"><strong>STATUS:</strong> <strong class="${debt === 0 ? 'success-text' : 'danger-text'}">${debt === 0 ? 'LUNAS' : 'BELUM LUNAS'}</strong></div>
+            `;
         }
         
         html += `<hr><div class="text-center">Terima Kasih!</div>`;
@@ -698,22 +747,67 @@ const app = {
     },
 
     markAsPaid: function(id) {
+        const t = this.state.transactions.find(x => x.id === id);
+        if(!t) return;
+
+        const currentDebt = t.remainingDebt !== undefined ? t.remainingDebt : Math.max(0, t.total - (t.cash || 0));
+        
         Swal.fire({
-            title: 'Lunasi Kasbon?',
-            text: 'Tandai transaksi ini sebagai Lunas?',
-            icon: 'question',
-            showCancelButton: true
+            title: 'Pelunasan Kasbon',
+            html: `
+                <div style="text-align: left; margin-bottom: 15px; font-size: 0.95rem;">
+                    <div style="margin-bottom: 5px;"><strong>ID Transaksi:</strong> ${t.id}</div>
+                    <div style="margin-bottom: 5px;"><strong>Nama Pelanggan:</strong> ${t.customer}</div>
+                    <div style="margin-bottom: 10px;"><strong>Sisa Hutang Saat Ini:</strong> <span class="danger-text" style="font-weight:bold;">${formatRupiah(currentDebt)}</span></div>
+                </div>
+            `,
+            input: 'number',
+            inputLabel: 'Masukkan Jumlah Pembayaran (Rp)',
+            inputPlaceholder: 'Cth: ' + currentDebt,
+            inputValue: currentDebt, // Prefill dengan uang pas pelunasan
+            showCancelButton: true,
+            confirmButtonText: 'Simpan Pembayaran',
+            cancelButtonText: 'Batal',
+            inputValidator: (value) => {
+                if (!value || parseInt(value) <= 0) {
+                    return 'Jumlah pembayaran tidak valid!';
+                }
+                if (parseInt(value) > currentDebt) {
+                    return `Pembayaran tidak boleh melebihi sisa hutang (${formatRupiah(currentDebt)})!`;
+                }
+            }
         }).then(res => {
             if(res.isConfirmed) {
-                const t = this.state.transactions.find(x => x.id === id);
-                if(t) {
-                    t.status = 'Lunas';
-                    this.state.syncQueue.push({ type: 'update_status', data: { id: t.id, status: 'Lunas' } });
-                    this.saveData();
-                    this.renderTransactionList('Kasbon');
-                    this.syncData();
-                    Swal.fire('Berhasil', 'Transaksi telah dilunasi', 'success');
-                }
+                const paymentAmount = parseInt(res.value) || 0;
+                const newDebt = currentDebt - paymentAmount;
+                
+                t.cash = (t.cash || 0) + paymentAmount;
+                t.remainingDebt = newDebt;
+                t.change = -newDebt; // Update kekurangan di kolom Kembalian
+                t.status = newDebt === 0 ? 'Lunas' : 'Belum Lunas';
+                
+                // Catat ke syncQueue
+                this.state.syncQueue.push({ 
+                    type: 'update_status', 
+                    data: { 
+                        id: t.id, 
+                        status: t.status,
+                        cash: t.cash,
+                        remainingDebt: t.remainingDebt
+                    } 
+                });
+                
+                this.saveData();
+                this.renderTransactionList('Kasbon', 'debtListContainer', 'searchDebt');
+                this.syncData();
+                
+                Swal.fire(
+                    'Berhasil', 
+                    newDebt === 0 
+                        ? 'Kasbon telah LUNAS!' 
+                        : `Pembayaran sebesar ${formatRupiah(paymentAmount)} dicatat. Sisa hutang: ${formatRupiah(newDebt)}`, 
+                    'success'
+                );
             }
         });
     },
@@ -1287,12 +1381,19 @@ const app = {
             txt += "   ----------------------------\n";
             
             // Info Pembayaran
-            txt += "   " + makePrintRow(`Bayar (${trx.method}):`, formatRupiah(trx.cash || 0), 28);
-            txt += "   " + makePrintRow("Kembali:", formatRupiah(trx.change || 0), 28);
-            
-            if(trx.status === 'Belum Lunas') {
+            if (trx.method === 'Kasbon') {
+                const dp = trx.cash || 0;
+                const debt = trx.remainingDebt !== undefined ? trx.remainingDebt : Math.max(0, trx.total - dp);
+                txt += "   " + makePrintRow("Metode:", "Kasbon", 28);
+                if (dp > 0) {
+                    txt += "   " + makePrintRow("Bayar DP:", formatRupiah(dp), 28);
+                }
+                txt += "   " + makePrintRow("Sisa Hutang:", formatRupiah(debt), 28);
                 txt += "   ----------------------------\n";
-                txt += textBoldOn + "   " + makeCenterRow("STATUS: KASBON (BELUM LUNAS)", 28) + textBoldOff;
+                txt += textBoldOn + "   " + makeCenterRow(debt === 0 ? "STATUS: LUNAS" : "STATUS: BELUM LUNAS", 28) + textBoldOff;
+            } else {
+                txt += "   " + makePrintRow(`Bayar (${trx.method}):`, formatRupiah(trx.cash || 0), 28);
+                txt += "   " + makePrintRow("Kembali:", formatRupiah(trx.change || 0), 28);
             }
             
             // Footer
