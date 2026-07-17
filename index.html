@@ -98,8 +98,10 @@
                     </div>
                     <div id="reader" class="hidden"></div>
                     <div class="manual-input">
-                        <input type="text" id="manualBarcode" placeholder="Ketik barcode/nama..." list="productList">
-                        <datalist id="productList"></datalist>
+                        <div class="input-wrapper" style="flex: 1; position: relative;">
+                            <input type="text" id="manualBarcode" placeholder="Ketik barcode/nama..." autocomplete="off">
+                            <div id="searchSuggestions" class="search-suggestions hidden"></div>
+                        </div>
                         <button id="addManualBtn" class="btn btn-secondary"><i class="fas fa-plus"></i></button>
                     </div>
                 </div>

@@ -185,8 +185,68 @@ const app = {
     bindEvents: function() {
         document.getElementById('toggleCameraBtn').addEventListener('click', () => this.toggleScanner());
         document.getElementById('addManualBtn').addEventListener('click', () => this.handleManualAdd());
-        document.getElementById('manualBarcode').addEventListener('keypress', (e) => {
+        
+        const manualInput = document.getElementById('manualBarcode');
+        const suggestionsBox = document.getElementById('searchSuggestions');
+
+        manualInput.addEventListener('keypress', (e) => {
             if (e.key === 'Enter') this.handleManualAdd();
+        });
+
+        // Event listener untuk memfilter produk secara real-time saat mengetik
+        manualInput.addEventListener('input', (e) => {
+            const term = e.target.value.trim().toLowerCase();
+            if (!term) {
+                suggestionsBox.classList.add('hidden');
+                suggestionsBox.innerHTML = '';
+                return;
+            }
+
+            const matches = this.state.products.filter(p => 
+                (p.Barcode_ID && p.Barcode_ID.toLowerCase().includes(term)) || 
+                (p.Nama_Camilan && p.Nama_Camilan.toLowerCase().includes(term))
+            );
+
+            if (matches.length === 0) {
+                suggestionsBox.innerHTML = '<div class="suggestion-item" style="color: #999; cursor: default;">Produk tidak ditemukan</div>';
+                suggestionsBox.classList.remove('hidden');
+                return;
+            }
+
+            suggestionsBox.innerHTML = '';
+            matches.slice(0, 8).forEach(p => { // Batasi maksimal 8 saran untuk performa terbaik di HP
+                const item = document.createElement('div');
+                item.className = 'suggestion-item';
+                item.innerHTML = `
+                    <div>
+                        <div class="suggestion-name">${p.Nama_Camilan}</div>
+                        <div class="suggestion-meta">Barcode: ${p.Barcode_ID || '—'} (Stok: ${p.Stok})</div>
+                    </div>
+                    <div style="font-weight: 600; color: var(--primary); font-size: 0.95rem;">${formatRupiah(p.Harga)}</div>
+                `;
+                item.addEventListener('click', () => {
+                    this.addToCart(p);
+                    manualInput.value = '';
+                    suggestionsBox.classList.add('hidden');
+                    suggestionsBox.innerHTML = '';
+                });
+                suggestionsBox.appendChild(item);
+            });
+            suggestionsBox.classList.remove('hidden');
+        });
+
+        // Sembunyikan sugesti pencarian jika mengklik di luar area input / dropdown
+        document.addEventListener('click', (e) => {
+            if (!manualInput.contains(e.target) && !suggestionsBox.contains(e.target)) {
+                suggestionsBox.classList.add('hidden');
+            }
+        });
+
+        // Munculkan kembali sugesti jika input mendapat fokus kembali dan tidak kosong
+        manualInput.addEventListener('focus', () => {
+            if (manualInput.value.trim()) {
+                manualInput.dispatchEvent(new Event('input'));
+            }
         });
 
         document.getElementById('discountType').addEventListener('change', () => this.updateCartUI());
@@ -229,6 +289,7 @@ const app = {
         if(p) {
             this.addToCart(p);
             document.getElementById('manualBarcode').value = '';
+            document.getElementById('searchSuggestions').classList.add('hidden');
         } else {
             Swal.fire('Error', 'Produk tidak ditemukan!', 'error');
         }
