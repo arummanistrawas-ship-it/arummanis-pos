@@ -38,13 +38,13 @@ const playBeep = () => {
         osc.connect(gain);
         gain.connect(ctx.destination);
         
-        osc.type = 'sine'; // Suara sine wave jernih
-        osc.frequency.setValueAtTime(1000, ctx.currentTime); // Frekuensi bip tinggi kasir (1000 Hz)
-        gain.gain.setValueAtTime(0.2, ctx.currentTime); // Volume sedang
-        gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.12); // Pudar di akhir durasi 120ms
+        osc.type = 'triangle'; // Gunakan triangle wave untuk bunyi digital yang tajam & nyaring mirip bip scanner kasir fisik
+        osc.frequency.setValueAtTime(1300, ctx.currentTime); // Frekuensi lebih tinggi (1300 Hz) agar suaranya melengking bersih
+        gain.gain.setValueAtTime(0.7, ctx.currentTime); // Perkeras volume menjadi 0.7 (70%)
+        gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.08); // Pudar sangat cepat dalam durasi 80ms agar bersuara "TIT" pendek padat
         
         osc.start(ctx.currentTime);
-        osc.stop(ctx.currentTime + 0.12);
+        osc.stop(ctx.currentTime + 0.08);
     } catch (e) {
         console.error("Gagal memutar bunyi bip:", e);
     }
