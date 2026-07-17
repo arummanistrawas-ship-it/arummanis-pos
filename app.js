@@ -1454,6 +1454,46 @@ const app = {
         }
     },
 
+    syncDataManual: async function() {
+        if (!navigator.onLine) {
+            Swal.fire('Offline', 'Tidak dapat melakukan sinkronisasi karena perangkat Anda sedang offline.', 'warning');
+            return;
+        }
+        if (this.state.syncQueue.length === 0) {
+            Swal.fire('Info', 'Semua data sudah tersinkronisasi sempurna dengan Google Sheets!', 'info');
+            return;
+        }
+        
+        Swal.fire({
+            title: 'Sinkronisasi Manual',
+            text: `Terdapat ${this.state.syncQueue.length} data dalam antrean. Mulai sinkronisasi sekarang?`,
+            icon: 'question',
+            showCancelButton: true,
+            confirmButtonText: 'Ya, Sinkronkan',
+            cancelButtonText: 'Batal'
+        }).then(async (res) => {
+            if (res.isConfirmed) {
+                Swal.fire({
+                    title: 'Sinkronisasi Sedang Berjalan',
+                    text: 'Harap tunggu...',
+                    allowOutsideClick: false,
+                    didOpen: () => {
+                        Swal.showLoading();
+                    }
+                });
+                
+                await this.syncData();
+                
+                Swal.close();
+                if (this.state.syncQueue.length === 0) {
+                    Swal.fire('Berhasil', 'Semua data berhasil tersinkronisasi ke Google Sheets!', 'success');
+                } else {
+                    Swal.fire('Perhatian', `Sinkronisasi selesai dengan ${this.state.syncQueue.length} data tersisa (kemungkinan Apps Script perlu di-deploy ulang).`, 'warning');
+                }
+            }
+        });
+    },
+
     // --- Scanner Logic ---
     toggleScanner: function() {
         if(this.state.isScannerRunning) this.stopScanner();

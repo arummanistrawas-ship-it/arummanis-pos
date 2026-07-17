@@ -46,16 +46,16 @@
                     <p id="pageTitle">Menu Utama</p>
                 </div>
             </div>
-            <div class="status-indicator" id="statusIndicator">
+            <div class="status-indicator" id="statusIndicator" onclick="app.syncDataManual()" style="cursor: pointer;" title="Klik untuk sinkronisasi manual">
                 <span class="status-dot online"></span>
-                <span class="status-text" id="statusText">Online</span>
+                <span class="status-text" id="statusText">Online (Tap to Sync)</span>
             </div>
         </header>
 
         <!-- Sync Banner -->
-        <div id="syncBanner" class="sync-banner hidden">
+        <div id="syncBanner" class="sync-banner hidden" onclick="app.syncDataManual()" style="cursor: pointer;" title="Klik untuk sinkronisasi manual">
             <i class="fas fa-cloud-upload-alt"></i>
-            <span id="syncText">0 antrean sync</span>
+            <span id="syncText">0 antrean sync (Tap to Sync)</span>
         </div>
 
         <main id="main-content">
