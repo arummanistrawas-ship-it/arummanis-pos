@@ -47,7 +47,9 @@ const app = {
         tempSubtotal: 0,
         tempDiscount: 0,
         tempTotal: 0,
-        productScanner: null
+        productScanner: null,
+        bluetoothDevice: null,
+        bluetoothChar: null
     },
 
     init: async function() {
@@ -1023,28 +1025,81 @@ const app = {
         window.open(`https://wa.me/?text=${encoded}`, '_blank');
     },
 
+    getBluetoothDevice: async function() {
+        // 1. Gunakan device yang sudah tersimpan di state jika ada
+        if (this.state.bluetoothDevice) {
+            return this.state.bluetoothDevice;
+        }
+
+        // 2. Coba ambil device yang sudah pernah di-pair sebelumnya (Chrome 85+)
+        if (navigator.bluetooth && navigator.bluetooth.getDevices) {
+            try {
+                const devices = await navigator.bluetooth.getDevices();
+                if (devices && devices.length > 0) {
+                    this.state.bluetoothDevice = devices[0];
+                    this.setupBluetoothDisconnectListener(devices[0]);
+                    return devices[0];
+                }
+            } catch (err) {
+                console.error("Gagal mengambil paired devices:", err);
+            }
+        }
+
+        // 3. Jika belum ada, minta user pairing lewat popup browser (hanya sekali pertama)
+        if (!navigator.bluetooth) throw new Error('Web Bluetooth tidak didukung di browser ini.');
+        const device = await navigator.bluetooth.requestDevice({
+            acceptAllDevices: true,
+            optionalServices: ['000018f0-0000-1000-8000-00805f9b34fb', 'e7810a71-73ae-499d-8c15-faa9aef0c3f2', '0000fee7-0000-1000-8000-00805f9b34fb']
+        });
+        
+        if (device) {
+            this.state.bluetoothDevice = device;
+            this.setupBluetoothDisconnectListener(device);
+        }
+        return device;
+    },
+
+    setupBluetoothDisconnectListener: function(device) {
+        device.addEventListener('gattserverdisconnected', () => {
+            console.log('Koneksi printer Bluetooth terputus.');
+            this.state.bluetoothChar = null;
+        });
+    },
+
+    connectToPrinter: async function() {
+        const device = await this.getBluetoothDevice();
+        if (!device) throw new Error('Printer tidak dipilih.');
+
+        // Jika printer masih tersambung dan karakteristik tulis siap, gunakan langsung (instant print)
+        if (device.gatt.connected && this.state.bluetoothChar) {
+            return this.state.bluetoothChar;
+        }
+
+        // Hubungkan kembali ke GATT Server (tanpa popup pairing browser ulang)
+        Swal.fire({ title: 'Menghubungkan ke Printer...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+        const server = await device.gatt.connect();
+        
+        const services = await server.getPrimaryServices();
+        let printChar = null;
+        for (const s of services) {
+            const chars = await s.getCharacteristics();
+            printChar = chars.find(c => c.properties.write || c.properties.writeWithoutResponse);
+            if (printChar) break;
+        }
+        
+        if (!printChar) throw new Error('Karakteristik Bluetooth untuk Print tidak ditemukan.');
+        
+        this.state.bluetoothChar = printChar;
+        Swal.close();
+        return printChar;
+    },
+
     printReceipt: async function() {
         const trx = this.state.lastTransaction;
         if (!trx) return;
         
         try {
-            if (!navigator.bluetooth) throw new Error('Web Bluetooth tidak didukung di browser ini.');
-            const device = await navigator.bluetooth.requestDevice({
-                acceptAllDevices: true,
-                optionalServices: ['000018f0-0000-1000-8000-00805f9b34fb', 'e7810a71-73ae-499d-8c15-faa9aef0c3f2', '0000fee7-0000-1000-8000-00805f9b34fb']
-            });
-            if (!device) return;
-            Swal.fire({ title: 'Menghubungkan...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
-
-            const server = await device.gatt.connect();
-            const services = await server.getPrimaryServices();
-            let printChar = null;
-            for (const s of services) {
-                const chars = await s.getCharacteristics();
-                printChar = chars.find(c => c.properties.write || c.properties.writeWithoutResponse);
-                if (printChar) break;
-            }
-            if (!printChar) throw new Error('Karakteristik Bluetooth untuk Print tidak ditemukan.');
+            const printChar = await this.connectToPrinter();
 
             const ESC = '\x1B'; const textBoldOn = ESC + 'E\x01'; const textBoldOff = ESC + 'E\x00';
             let txt = ESC + '@' + ESC + 'a\x00'; // Set default left alignment secara eksplisit
@@ -1091,7 +1146,6 @@ const app = {
                 await printChar.writeValue(data.slice(i, i + 256));
                 await new Promise(r => setTimeout(r, 50));
             }
-            await device.gatt.disconnect();
             Swal.fire('Berhasil', 'Struk dicetak', 'success');
         } catch (e) {
             if (e.name !== 'NotFoundError') Swal.fire('Gagal', e.message, 'error');
