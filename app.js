@@ -921,14 +921,24 @@ const app = {
         const rc = document.getElementById('receiptContent');
         const settings = this.state.settings || { shopName: 'Arummanis', shopLogo: '🍬', cashierName: 'Admin' };
         
-        let logoHtml = `<h2>🍬 ${settings.shopName || 'ARUMMANIS'}</h2>`;
+        let headerHtml = '';
         if (settings.shopLogo && settings.shopLogo.startsWith('data:image')) {
-            logoHtml = `<img src="${settings.shopLogo}" style="max-height: 50px; max-width: 100px; display: block; margin: 0 auto 10px; object-fit: contain;">
-                        <h2 style="margin-top: 5px;">${settings.shopName || 'ARUMMANIS'}</h2>`;
+            headerHtml += `<img src="${settings.shopLogo}" style="max-height: 60px; max-width: 120px; display: block; margin: 0 auto 8px; object-fit: contain;">`;
+        } else {
+            headerHtml += `<div style="font-size: 2rem; text-align: center; margin-bottom: 5px;">🍬</div>`;
+        }
+        
+        headerHtml += `<h2 style="font-size: 1.4rem; font-weight: bold; text-align: center; margin: 0 0 4px 0; color: var(--dark);">${settings.shopName || 'ARUMMANIS'}</h2>`;
+        
+        if (settings.shopAddress) {
+            headerHtml += `<div style="text-align: center; font-size: 0.85rem; color: #64748b; margin-bottom: 2px; line-height: 1.2;">${settings.shopAddress}</div>`;
+        }
+        if (settings.shopPhone) {
+            headerHtml += `<div style="text-align: center; font-size: 0.85rem; color: #64748b; margin-bottom: 8px; line-height: 1.2;">Telp: ${settings.shopPhone}</div>`;
         }
         
         let html = `
-            ${logoHtml}
+            ${headerHtml}
             <div class="r-row"><span>No:</span> <span>${trx.id}</span></div>
             <div class="r-row"><span>Tgl:</span> <span>${new Date(trx.timestamp).toLocaleString('id-ID')}</span></div>
             <div class="r-row"><span>Kasir:</span> <span>${settings.cashierName || 'Admin'}</span></div>
@@ -975,16 +985,7 @@ const app = {
             `;
         }
         
-        let footerDetails = '';
-        if (settings.shopAddress) {
-            footerDetails += `<div style="font-size: 0.8rem; color: #64748b; margin-bottom: 3px;">${settings.shopAddress}</div>`;
-        }
-        if (settings.shopPhone) {
-            footerDetails += `<div style="font-size: 0.8rem; color: #64748b; margin-bottom: 5px;">Telp: ${settings.shopPhone}</div>`;
-        }
-        
         html += `<hr><div class="text-center">
-            ${footerDetails}
             <strong>${settings.receiptFooter || 'Terima Kasih!'}</strong>
         </div>`;
         rc.innerHTML = html;
@@ -1981,65 +1982,22 @@ const app = {
         
         try {
             const printChar = await this.connectToPrinter();
+            const settings = this.state.settings || { shopName: 'Arummanis', shopAddress: '', shopPhone: '', shopLogo: '', cashierName: 'Admin', receiptFooter: 'Terima Kasih!' };
 
-            const ESC = '\x1B'; const textBoldOn = ESC + 'E\x01'; const textBoldOff = ESC + 'E\x00';
-            let txt = ESC + '@' + ESC + 'a\x00'; // Set default left alignment secara eksplisit
-            
-            const settings = this.state.settings || { shopName: 'Arummanis', shopAddress: 'Camilan Manis & Gurih', cashierName: 'Admin' };
-            
-            // Header struk (Dibuat center manual dengan lebar 28 karakter + 3 spasi margin untuk mengimbangi pergeseran fisik printer)
-            txt += textBoldOn + "   " + makeCenterRow(settings.shopName || "ARUMMANIS", 28) + textBoldOff;
-            txt += "   ----------------------------\n"; // 3 spasi + 28 strip
-            
-            // Metadata transaksi
-            txt += `   No   : ${trx.id}\n   Tgl  : ${new Date(trx.timestamp).toLocaleString('id-ID')}\n   Kasir: ${settings.cashierName || 'Admin'}\n   Pel  : ${trx.customer}\n`;
-            txt += "   ----------------------------\n";
-            
-            // Daftar barang belanjaan
-            trx.items.forEach(i => {
-                txt += `   ${i.Nama_Camilan}\n`;
-                const left = `${i.qty} x ${formatRupiah(i.editPrice)}`;
-                const right = formatRupiah(i.qty * i.editPrice);
-                txt += "   " + makePrintRow(left, right, 28);
-            });
-            txt += "   ----------------------------\n";
-            
-            // Ringkasan Total
-            txt += "   " + makePrintRow("Subtotal:", formatRupiah(trx.subtotal), 28);
-            txt += "   " + makePrintRow("Diskon:", "-" + formatRupiah(trx.discount || 0), 28);
-            txt += textBoldOn + "   " + makePrintRow("TOTAL:", formatRupiah(trx.total), 28) + textBoldOff;
-            txt += "   ----------------------------\n";
-            
-            // Info Pembayaran
-            if (trx.method === 'Kasbon') {
-                const initDP = trx.initialDeposit || 0;
-                const totalPaid = trx.cash || 0;
-                const subsequentPay = totalPaid - initDP;
-                const debt = trx.remainingDebt !== undefined ? trx.remainingDebt : Math.max(0, trx.total - totalPaid);
-                
-                txt += "   " + makePrintRow("Metode:", "Kasbon", 28);
-                txt += "   " + makePrintRow("Uang Muka (DP):", formatRupiah(initDP), 28);
-                if (subsequentPay > 0) {
-                    txt += "   " + makePrintRow("Pelunasan/Cicil:", formatRupiah(subsequentPay), 28);
-                    txt += "   " + makePrintRow("Total Terbayar:", formatRupiah(totalPaid), 28);
-                }
-                txt += "   " + makePrintRow("Sisa Hutang:", formatRupiah(debt), 28);
-                txt += "   ----------------------------\n";
-                txt += textBoldOn + "   " + makeCenterRow(debt === 0 ? "STATUS: LUNAS" : "STATUS: BELUM LUNAS", 28) + textBoldOff;
-            } else {
-                txt += "   " + makePrintRow(`Bayar (${trx.method}):`, formatRupiah(trx.cash || 0), 28);
-                txt += "   " + makePrintRow("Kembali:", formatRupiah(trx.change || 0), 28);
-            }
-            
-            txt += "   ----------------------------\n";
-            if (settings.shopAddress) {
-                txt += "   " + makeCenterRow(settings.shopAddress, 28) + "\n";
-            }
-            if (settings.shopPhone) {
-                txt += "   " + makeCenterRow("Telp: " + settings.shopPhone, 28) + "\n";
-            }
-            txt += "   " + makeCenterRow(settings.receiptFooter || "Terima Kasih!", 28) + "\n\n";
+            const alignCenter = new Uint8Array([0x1B, 0x61, 1]);
+            const alignLeft = new Uint8Array([0x1B, 0x61, 0]);
+            const boldOn = new Uint8Array([0x1B, 0x45, 1]);
+            const boldOff = new Uint8Array([0x1B, 0x45, 0]);
+            const sizeLarge = new Uint8Array([0x1D, 0x21, 0x11]); // Double height + Double width
+            const sizeNormal = new Uint8Array([0x1D, 0x21, 0x00]); // Normal size
+            const lineFeed = new TextEncoder().encode("\n");
 
+            const headerParts = [];
+            // 1. Initialize printer and align center
+            headerParts.push(new Uint8Array([0x1B, 0x40])); // ESC @ (Init)
+            headerParts.push(alignCenter);
+
+            // 2. Render logo image at the very top center if exists
             let logoBytes = null;
             if (settings.shopLogo && settings.shopLogo.startsWith('data:image')) {
                 try {
@@ -2048,28 +2006,110 @@ const app = {
                     console.error("Gagal mengonversi logo ke ESC/POS:", logoErr);
                 }
             }
-
-            const data = new TextEncoder().encode(txt);
-            let finalBytes = data;
             if (logoBytes) {
-                const centerAlignCmd = new Uint8Array([0x1B, 0x61, 1]);
-                const leftAlignCmd = new Uint8Array([0x1B, 0x61, 0]);
-                const feedLines = new Uint8Array([0x0A, 0x0A, 0x0A]);
-                
-                const merged = new Uint8Array(data.length + centerAlignCmd.length + logoBytes.length + leftAlignCmd.length + feedLines.length);
-                merged.set(data);
-                merged.set(centerAlignCmd, data.length);
-                merged.set(logoBytes, data.length + centerAlignCmd.length);
-                merged.set(leftAlignCmd, data.length + centerAlignCmd.length + logoBytes.length);
-                merged.set(feedLines, data.length + centerAlignCmd.length + logoBytes.length + leftAlignCmd.length);
-                finalBytes = merged;
-            } else {
-                const feedLines = new Uint8Array([0x0A, 0x0A, 0x0A]);
-                const merged = new Uint8Array(data.length + feedLines.length);
-                merged.set(data);
-                merged.set(feedLines, data.length);
-                finalBytes = merged;
+                headerParts.push(logoBytes);
+                headerParts.push(lineFeed);
             }
+
+            // 3. Shop Name (Bold & Large)
+            headerParts.push(sizeLarge);
+            headerParts.push(boldOn);
+            headerParts.push(new TextEncoder().encode(settings.shopName || "ARUMMANIS"));
+            headerParts.push(lineFeed);
+            headerParts.push(boldOff);
+            headerParts.push(sizeNormal);
+
+            // 4. Shop Address (Normal size, centered, no extra line break)
+            if (settings.shopAddress) {
+                headerParts.push(new TextEncoder().encode(settings.shopAddress + "\n"));
+            }
+
+            // 5. Shop Phone (Normal size, centered, no extra line break)
+            if (settings.shopPhone) {
+                headerParts.push(new TextEncoder().encode("Telp: " + settings.shopPhone + "\n"));
+            }
+
+            // 6. Restore Left Alignment for the metadata and items list
+            headerParts.push(alignLeft);
+
+            // Build receipt body text with left-margin padding (3 spaces)
+            let bodyTxt = "";
+            bodyTxt += "   ----------------------------\n";
+            bodyTxt += `   No   : ${trx.id}\n   Tgl  : ${new Date(trx.timestamp).toLocaleString('id-ID')}\n   Kasir: ${settings.cashierName || 'Admin'}\n   Pel  : ${trx.customer}\n`;
+            bodyTxt += "   ----------------------------\n";
+            
+            // Items list
+            trx.items.forEach(i => {
+                bodyTxt += `   ${i.Nama_Camilan}\n`;
+                const left = `${i.qty} x ${formatRupiah(i.editPrice)}`;
+                const right = formatRupiah(i.qty * i.editPrice);
+                bodyTxt += "   " + makePrintRow(left, right, 28);
+            });
+            bodyTxt += "   ----------------------------\n";
+            
+            // Totals
+            bodyTxt += "   " + makePrintRow("Subtotal:", formatRupiah(trx.subtotal), 28);
+            bodyTxt += "   " + makePrintRow("Diskon:", "-" + formatRupiah(trx.discount || 0), 28);
+            bodyTxt += "   " + makePrintRow("TOTAL:", formatRupiah(trx.total), 28);
+            bodyTxt += "   ----------------------------\n";
+            
+            // Payment info
+            if (trx.method === 'Kasbon') {
+                const initDP = trx.initialDeposit || 0;
+                const totalPaid = trx.cash || 0;
+                const subsequentPay = totalPaid - initDP;
+                const debt = trx.remainingDebt !== undefined ? trx.remainingDebt : Math.max(0, trx.total - totalPaid);
+                
+                bodyTxt += "   " + makePrintRow("Metode:", "Kasbon", 28);
+                bodyTxt += "   " + makePrintRow("Uang Muka (DP):", formatRupiah(initDP), 28);
+                if (subsequentPay > 0) {
+                    bodyTxt += "   " + makePrintRow("Pelunasan/Cicil:", formatRupiah(subsequentPay), 28);
+                    bodyTxt += "   " + makePrintRow("Total Terbayar:", formatRupiah(totalPaid), 28);
+                }
+                bodyTxt += "   " + makePrintRow("Sisa Hutang:", formatRupiah(debt), 28);
+                bodyTxt += "   ----------------------------\n";
+            } else {
+                bodyTxt += "   " + makePrintRow(`Bayar (${trx.method}):`, formatRupiah(trx.cash || 0), 28);
+                bodyTxt += "   " + makePrintRow("Kembali:", formatRupiah(trx.change || 0), 28);
+                bodyTxt += "   ----------------------------\n";
+            }
+
+            const bodyBytes = new TextEncoder().encode(bodyTxt);
+
+            const footerParts = [];
+            // Centering Status Kasbon jika metodenya Kasbon
+            if (trx.method === 'Kasbon') {
+                const initDP = trx.initialDeposit || 0;
+                const totalPaid = trx.cash || 0;
+                const debt = trx.remainingDebt !== undefined ? trx.remainingDebt : Math.max(0, trx.total - totalPaid);
+                
+                footerParts.push(alignCenter);
+                footerParts.push(boldOn);
+                footerParts.push(new TextEncoder().encode(debt === 0 ? "STATUS: LUNAS\n" : "STATUS: BELUM LUNAS\n"));
+                footerParts.push(boldOff);
+                footerParts.push(new TextEncoder().encode("----------------------------\n"));
+            }
+
+            // Pesan Penutup Struk (Center, normal size)
+            footerParts.push(alignCenter);
+            footerParts.push(new TextEncoder().encode(settings.receiptFooter || "Terima Kasih!"));
+            footerParts.push(new Uint8Array([0x0A, 0x0A, 0x0A, 0x0A])); // Feed lines for physical cutting
+
+            // Gabungkan semua Uint8Array secara berurutan
+            const allArrays = [];
+            headerParts.forEach(p => allArrays.push(p));
+            allArrays.push(bodyBytes);
+            footerParts.forEach(p => allArrays.push(p));
+
+            let totalLen = 0;
+            allArrays.forEach(arr => totalLen += arr.length);
+
+            const finalBytes = new Uint8Array(totalLen);
+            let offset = 0;
+            allArrays.forEach(arr => {
+                finalBytes.set(arr, offset);
+                offset += arr.length;
+            });
 
             for (let i = 0; i < finalBytes.length; i += 256) {
                 await printChar.writeValue(finalBytes.slice(i, i + 256));
