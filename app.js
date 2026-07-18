@@ -485,8 +485,8 @@ const app = {
             const dVal = Math.max(0, parseInt(document.getElementById('discountValue').value) || 0);
             let discountAmount = 0;
             if (dType === 'nominal') discountAmount = dVal;
-            if (dType === 'percent') discountAmount = subtotal * (Math.min(100, dVal) / 100);
-            const grandTotal = Math.max(0, subtotal - discountAmount);
+            if (dType === 'percent') discountAmount = subtotal * (dVal / 100);
+            const grandTotal = subtotal - discountAmount;
             
             document.getElementById('itemCount').textContent = `${count} item`;
             document.getElementById('subtotalPrice').textContent = formatRupiah(subtotal);
@@ -563,15 +563,15 @@ const app = {
             });
         }
 
-        // Hitung Diskon (C3 Fix: clamp negative discounts & cap percent at 100%)
+        // Hitung Diskon (C3 Fix: clamp negative discounts)
         const dType = document.getElementById('discountType').value;
         const dVal = Math.max(0, parseInt(document.getElementById('discountValue').value) || 0);
         let discountAmount = 0;
         
         if (dType === 'nominal') discountAmount = dVal;
-        if (dType === 'percent') discountAmount = subtotal * (Math.min(100, dVal) / 100);
+        if (dType === 'percent') discountAmount = subtotal * (dVal / 100);
         
-        const grandTotal = Math.max(0, subtotal - discountAmount);
+        const grandTotal = subtotal - discountAmount;
         
         document.getElementById('itemCount').textContent = `${count} item`;
         document.getElementById('subtotalPrice').textContent = formatRupiah(subtotal);
