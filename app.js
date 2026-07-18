@@ -929,7 +929,6 @@ const app = {
         
         let html = `
             ${logoHtml}
-            ${settings.shopAddress ? `<div style="text-align: center; font-size: 0.8rem; color: #64748b; margin-top: -5px; margin-bottom: 10px;">${settings.shopAddress}</div>` : ''}
             <div class="r-row"><span>No:</span> <span>${trx.id}</span></div>
             <div class="r-row"><span>Tgl:</span> <span>${new Date(trx.timestamp).toLocaleString('id-ID')}</span></div>
             <div class="r-row"><span>Kasir:</span> <span>${settings.cashierName || 'Admin'}</span></div>
@@ -976,7 +975,18 @@ const app = {
             `;
         }
         
-        html += `<hr><div class="text-center">${settings.receiptFooter || 'Terima Kasih!'}</div>`;
+        let footerDetails = '';
+        if (settings.shopAddress) {
+            footerDetails += `<div style="font-size: 0.8rem; color: #64748b; margin-bottom: 3px;">${settings.shopAddress}</div>`;
+        }
+        if (settings.shopPhone) {
+            footerDetails += `<div style="font-size: 0.8rem; color: #64748b; margin-bottom: 5px;">Telp: ${settings.shopPhone}</div>`;
+        }
+        
+        html += `<hr><div class="text-center">
+            ${footerDetails}
+            <strong>${settings.receiptFooter || 'Terima Kasih!'}</strong>
+        </div>`;
         rc.innerHTML = html;
     },
 
@@ -1979,12 +1989,6 @@ const app = {
             
             // Header struk (Dibuat center manual dengan lebar 28 karakter + 3 spasi margin untuk mengimbangi pergeseran fisik printer)
             txt += textBoldOn + "   " + makeCenterRow(settings.shopName || "ARUMMANIS", 28) + textBoldOff;
-            if (settings.shopAddress) {
-                txt += "   " + makeCenterRow(settings.shopAddress, 28);
-            }
-            if (settings.shopPhone) {
-                txt += "   " + makeCenterRow("Telp: " + settings.shopPhone, 28);
-            }
             txt += "   ----------------------------\n"; // 3 spasi + 28 strip
             
             // Metadata transaksi
@@ -2028,6 +2032,12 @@ const app = {
             }
             
             txt += "   ----------------------------\n";
+            if (settings.shopAddress) {
+                txt += "   " + makeCenterRow(settings.shopAddress, 28) + "\n";
+            }
+            if (settings.shopPhone) {
+                txt += "   " + makeCenterRow("Telp: " + settings.shopPhone, 28) + "\n";
+            }
             txt += "   " + makeCenterRow(settings.receiptFooter || "Terima Kasih!", 28) + "\n\n";
 
             let logoBytes = null;
