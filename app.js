@@ -679,7 +679,7 @@ const app = {
         // Reset tombol confirm
         const confirmBtn = document.getElementById('confirmCheckoutBtn');
         confirmBtn.disabled = false;
-        confirmBtn.textContent = 'Simpan Pembayaran';
+        confirmBtn.textContent = 'Bayar';
 
         // Render tombol nominal cepat berdasarkan sisa hutang
         const quickCashBox = document.getElementById('quickCashContainer');
@@ -757,6 +757,11 @@ const app = {
         trx.remainingDebt = newDebt;
         trx.change = method === 'Tunai' ? changeAmount : -newDebt;
         trx.status = newDebt === 0 ? 'Lunas' : 'Belum Lunas';
+
+        // Simpan detail pembayaran/pelunasan terakhir untuk ditampilkan di struk
+        trx.lastRepaymentCash = cash;
+        trx.lastRepaymentChange = changeAmount;
+        trx.lastRepaymentMethod = method;
 
         // Catat ke syncQueue
         this.state.syncQueue.push({ 
@@ -1012,6 +1017,19 @@ const app = {
                 <div class="r-row"><span>Sisa Hutang:</span> <span class="${debt > 0 ? 'danger-text' : 'success-text'}" style="font-weight:bold;">${formatRupiah(debt)}</span></div>
                 <div class="r-row"><strong>STATUS:</strong> <strong class="${debt === 0 ? 'success-text' : 'danger-text'}">${debt === 0 ? 'LUNAS' : 'BELUM LUNAS'}</strong></div>
             `;
+
+            // Tambahkan rincian pembayaran kasbon hari ini jika ada pelunasan
+            if (trx.lastRepaymentCash !== undefined) {
+                html += `<hr>`;
+                html += `<div style="text-align: center; font-weight: bold; margin-bottom: 5px; font-size: 0.9rem; color: var(--dark);">Pembayaran Pelunasan Hari Ini:</div>`;
+                html += `<div class="r-row"><span>Metode:</span> <span>${trx.lastRepaymentMethod}</span></div>`;
+                if (trx.lastRepaymentMethod === 'Tunai') {
+                    html += `<div class="r-row"><span>Uang Bayar:</span> <span>${formatRupiah(trx.lastRepaymentCash)}</span></div>`;
+                    html += `<div class="r-row"><span>Kembalian:</span> <span>${formatRupiah(trx.lastRepaymentChange)}</span></div>`;
+                } else {
+                    html += `<div class="r-row"><span>Uang Bayar:</span> <span>${formatRupiah(trx.lastRepaymentCash)}</span></div>`;
+                }
+            }
         }
         
         html += `<hr><div class="text-center">
@@ -2162,6 +2180,19 @@ const app = {
                 }
                 bodyTxt += "   " + makePrintRow("Sisa Hutang:", formatRupiah(debt), 28);
                 bodyTxt += "   ----------------------------\n";
+
+                // Tambahkan rincian pembayaran kasbon hari ini jika ada pelunasan untuk printout fisik
+                if (trx.lastRepaymentCash !== undefined) {
+                    bodyTxt += "   " + centerNormal("Bayar Pelunasan Hari Ini:") + "\n";
+                    bodyTxt += "   " + makePrintRow("Metode:", trx.lastRepaymentMethod, 28);
+                    if (trx.lastRepaymentMethod === 'Tunai') {
+                        bodyTxt += "   " + makePrintRow("Uang Tunai:", formatRupiah(trx.lastRepaymentCash), 28);
+                        bodyTxt += "   " + makePrintRow("Kembali:", formatRupiah(trx.lastRepaymentChange), 28);
+                    } else {
+                        bodyTxt += "   " + makePrintRow("Uang Bayar:", formatRupiah(trx.lastRepaymentCash), 28);
+                    }
+                    bodyTxt += "   ----------------------------\n";
+                }
             } else {
                 bodyTxt += "   " + makePrintRow(`Bayar (${trx.method}):`, formatRupiah(trx.cash || 0), 28);
                 bodyTxt += "   " + makePrintRow("Kembali:", formatRupiah(trx.change || 0), 28);
