@@ -566,6 +566,14 @@ const app = {
 
     // --- Checkout Logic ---
     prepareCheckout: function() {
+        if (this.state.cart.length === 0) {
+            Swal.fire('Gagal', 'Keranjang belanja masih kosong!', 'warning');
+            return;
+        }
+        if (this.state.tempSubtotal - this.state.tempDiscount < 0) {
+            Swal.fire('Gagal', 'Total pembayaran tidak boleh bernilai minus! Silakan periksa kembali nominal diskon Anda.', 'warning');
+            return;
+        }
         const total = this.state.tempTotal;
         if (this.state.isScannerRunning) this.stopScanner();
 
@@ -864,6 +872,10 @@ const app = {
         const customer = document.getElementById('checkoutCustomer').value.trim();
         const cash = parseInt(document.getElementById('checkoutCash').value) || 0;
         
+        if (this.state.tempSubtotal - this.state.tempDiscount < 0) {
+            Swal.fire('Gagal', 'Total pembayaran tidak boleh bernilai minus! Silakan periksa kembali nominal diskon Anda.', 'warning');
+            return;
+        }
         if (method === 'Kasbon' && !customer) {
             Swal.fire('Gagal', 'Nama Pelanggan wajib diisi untuk transaksi Kasbon!', 'warning');
             return;

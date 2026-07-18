@@ -292,7 +292,10 @@ body { background: linear-gradient(135deg, #fdfbfb 0%, #ebedee 100%); color: var
         padding: 1.5rem;
     }
     .app-container.pos-active #view-pos .scanner-section #reader {
-        max-height: 150px;
+        width: 100%;
+        max-width: 260px;
+        aspect-ratio: 1 / 1;
+        margin: 0.5rem auto;
     }
 
     /* 4. Cart/Checkout Card (Right column, spans both rows) */
