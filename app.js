@@ -2171,9 +2171,9 @@ const app = {
                 ctx.fillStyle = '#FFFFFF';
                 ctx.fillRect(0, 0, canvasWidth, logoHeight);
 
-                // Draw logo in the center of the 384px canvas, shifted 24px (3 bytes) to the right
+                // Draw logo in the center of the 384px canvas, shifted 12px (1.5 bytes / 1 char) to the right
                 // to compensate for the physical printer margin shift (matching the text offset).
-                const xOffset = Math.floor((canvasWidth - logoWidth) / 2) + 24;
+                const xOffset = Math.floor((canvasWidth - logoWidth) / 2) + 12;
                 ctx.drawImage(img, xOffset, 0, logoWidth, logoHeight);
 
                 const imgData = ctx.getImageData(0, 0, canvasWidth, logoHeight);
