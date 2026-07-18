@@ -1049,6 +1049,13 @@ const app = {
         if(!this.state.lastTransaction) return;
         const trx = this.state.lastTransaction;
         
+        // H6 Fix: Cegah edit jika sudah tersinkronisasi ke server (tidak ada di antrean syncQueue)
+        const isPendingSync = this.state.syncQueue.some(q => q.type === 'transaction' && q.data.id === trx.id);
+        if (!isPendingSync && navigator.onLine) {
+            Swal.fire('Tidak Dapat Diedit', 'Transaksi ini sudah terekam ke dalam Google Sheets secara permanen. Fitur pembatalan otomatis hanya berlaku untuk transaksi baru yang belum terkirim. Jika ada kesalahan, silakan input ulang / catat retur secara manual.', 'error');
+            return;
+        }
+
         Swal.fire({
             title: 'Edit Transaksi Ini?',
             text: 'Ini akan membatalkan transaksi sebelumnya dan mengembalikan barang ke keranjang. Lanjutkan?',
@@ -1729,17 +1736,25 @@ const app = {
 
     resetLocalData: function() {
         Swal.fire({
-            title: 'Hapus Semua Data Lokal?',
-            text: 'Tindakan ini akan mengosongkan transaksi offline, produk ter-cache, dan pengaturan lokal di perangkat ini. Data di Google Sheets akan tetap aman.',
+            title: 'Hapus Riwayat Data Lokal?',
+            text: 'Tindakan ini akan mengosongkan riwayat transaksi, keranjang, dan daftar produk ter-cache. Profil pengaturan toko Anda akan tetap aman.',
             icon: 'warning',
             showCancelButton: true,
             confirmButtonColor: '#d33',
-            confirmButtonText: 'Ya, Hapus Semua!',
+            confirmButtonText: 'Ya, Bersihkan!',
             cancelButtonText: 'Batal'
         }).then((result) => {
             if (result.isConfirmed) {
+                // H7 Fix: Preserve settings
+                const savedGas = localStorage.getItem('pos_gas_url');
+                const savedSettings = localStorage.getItem('pos_settings');
+                
                 localStorage.clear();
-                Swal.fire('Terhapus', 'Semua database lokal telah dibersihkan. Aplikasi akan dimuat ulang.', 'success').then(() => {
+                
+                if (savedGas) localStorage.setItem('pos_gas_url', savedGas);
+                if (savedSettings) localStorage.setItem('pos_settings', savedSettings);
+                
+                Swal.fire('Berhasil', 'Riwayat database lokal telah dibersihkan. Aplikasi akan dimuat ulang.', 'success').then(() => {
                     window.location.reload();
                 });
             }
