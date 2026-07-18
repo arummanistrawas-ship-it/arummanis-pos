@@ -1984,16 +1984,34 @@ const app = {
             const printChar = await this.connectToPrinter();
             const settings = this.state.settings || { shopName: 'Arummanis', shopAddress: '', shopPhone: '', shopLogo: '', cashierName: 'Admin', receiptFooter: 'Terima Kasih!' };
 
-            const alignCenter = new Uint8Array([0x1B, 0x61, 1]);
-            const alignLeft = new Uint8Array([0x1B, 0x61, 0]);
+            // ESC/POS Commands using ASCII values '0' and '1' for maximum compatibility
+            const alignCenter = new Uint8Array([0x1B, 0x61, 0x31]); // ESC a '1' (Center)
+            const alignLeft = new Uint8Array([0x1B, 0x61, 0x30]);   // ESC a '0' (Left)
             const boldOn = new Uint8Array([0x1B, 0x45, 1]);
             const boldOff = new Uint8Array([0x1B, 0x45, 0]);
-            const sizeLarge = new Uint8Array([0x1D, 0x21, 0x11]); // Double height + Double width
-            const sizeNormal = new Uint8Array([0x1D, 0x21, 0x00]); // Normal size
+            const sizeDoubleHeight = new Uint8Array([0x1D, 0x21, 0x01]); // GS ! 1 (Double height, normal width)
+            const sizeNormal = new Uint8Array([0x1D, 0x21, 0x00]);       // Normal size
             const lineFeed = new TextEncoder().encode("\n");
 
+            // Text wrapping helper to prevent messy printer auto-wraps
+            const wrapText = (text, limit) => {
+                const words = text.split(' ');
+                const lines = [];
+                let currentLine = '';
+                words.forEach(word => {
+                    if ((currentLine + word).length > limit) {
+                        if (currentLine) lines.push(currentLine.trim());
+                        currentLine = word + ' ';
+                    } else {
+                        currentLine += word + ' ';
+                    }
+                });
+                if (currentLine) lines.push(currentLine.trim());
+                return lines;
+            };
+
             const headerParts = [];
-            // 1. Initialize printer and align center
+            // 1. Initialize printer and align center natively
             headerParts.push(new Uint8Array([0x1B, 0x40])); // ESC @ (Init)
             headerParts.push(alignCenter);
 
@@ -2011,25 +2029,30 @@ const app = {
                 headerParts.push(lineFeed);
             }
 
-            // 3. Shop Name (Bold & Large)
-            headerParts.push(sizeLarge);
+            // 3. Shop Name (Bold & Double Height only, to prevent wrapping cut-offs)
+            headerParts.push(sizeDoubleHeight);
             headerParts.push(boldOn);
-            headerParts.push(new TextEncoder().encode(settings.shopName || "ARUMMANIS"));
-            headerParts.push(lineFeed);
+            const shopNameLines = wrapText(settings.shopName || "ARUMMANIS", 28);
+            shopNameLines.forEach(line => {
+                headerParts.push(new TextEncoder().encode(line + "\n"));
+            });
             headerParts.push(boldOff);
             headerParts.push(sizeNormal);
 
-            // 4. Shop Address (Normal size, centered, no extra line break)
+            // 4. Shop Address (Normal size, centered, auto-wrapped to 28 chars to fit nicely)
             if (settings.shopAddress) {
-                headerParts.push(new TextEncoder().encode(settings.shopAddress + "\n"));
+                const addressLines = wrapText(settings.shopAddress, 28);
+                addressLines.forEach(line => {
+                    headerParts.push(new TextEncoder().encode(line + "\n"));
+                });
             }
 
-            // 5. Shop Phone (Normal size, centered, no extra line break)
+            // 5. Shop Phone (Normal size, centered)
             if (settings.shopPhone) {
                 headerParts.push(new TextEncoder().encode("Telp: " + settings.shopPhone + "\n"));
             }
 
-            // 6. Restore Left Alignment for the metadata and items list
+            // 6. Restore Left Alignment for metadata & items
             headerParts.push(alignLeft);
 
             // Build receipt body text with left-margin padding (3 spaces)
