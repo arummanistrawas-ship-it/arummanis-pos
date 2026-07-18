@@ -98,10 +98,10 @@ const app = {
         checkoutMode: 'new',
         repaymentTransactionId: null,
         settings: {
-            shopName: 'Arummanis',
-            shopAddress: 'Camilan Manis & Gurih',
+            shopName: 'Kasir Manis',
+            shopAddress: 'Store Camilan dan Oleh-oleh',
             shopPhone: '08123456789',
-            shopLogo: '🍬',
+            shopLogo: '🏪',
             cashierName: 'Admin',
             shopWA: '',
             receiptFooter: 'Terima Kasih!'
@@ -139,8 +139,8 @@ const app = {
         // Dummy data jika kosong (hanya untuk testing lokal sebelum konek GAS)
         if (this.state.products.length === 0 && GAS_URL === 'YOUR_GOOGLE_APPS_SCRIPT_WEB_APP_URL') {
             this.state.products = [
-                { Barcode_ID: "1111", Nama_Camilan: "Arummanis Original", Harga: 15000, Stok: 50, Status: "Ready" },
-                { Barcode_ID: "2222", Nama_Camilan: "Arummanis Coklat", Harga: 17000, Stok: 30, Status: "Ready" }
+                { Barcode_ID: "1111", Nama_Camilan: "Camilan Original", Harga: 15000, Stok: 50, Status: "Ready" },
+                { Barcode_ID: "2222", Nama_Camilan: "Camilan Coklat", Harga: 17000, Stok: 30, Status: "Ready" }
             ];
             this.saveData();
             this.updateProductDatalist();
@@ -151,6 +151,15 @@ const app = {
     navigate: function(viewId, pushHistory = true) {
         document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
         document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+        
+        const container = document.querySelector('.app-container');
+        if (container) {
+            if (viewId === 'pos') {
+                container.classList.add('pos-active');
+            } else {
+                container.classList.remove('pos-active');
+            }
+        }
         
         const view = document.getElementById(`view-${viewId}`);
         if(view) {

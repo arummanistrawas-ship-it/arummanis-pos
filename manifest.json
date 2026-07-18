@@ -1,7 +1,7 @@
 {
-  "name": "Arummanis POS",
-  "short_name": "Arummanis",
-  "description": "Offline-first Point of Sale untuk Arummanis",
+  "name": "Kasir Manis POS",
+  "short_name": "Kasir Manis",
+  "description": "Point of Sale (POS) Offline-First untuk UMKM",
   "start_url": "./index.html",
   "display": "standalone",
   "background_color": "#F7FFF7",
