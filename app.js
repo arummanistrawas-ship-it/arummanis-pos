@@ -1984,13 +1984,11 @@ const app = {
             const printChar = await this.connectToPrinter();
             const settings = this.state.settings || { shopName: 'Arummanis', shopAddress: '', shopPhone: '', shopLogo: '', cashierName: 'Admin', receiptFooter: 'Terima Kasih!' };
 
-            // ESC/POS Commands using ASCII values '0' and '1' for maximum compatibility
-            const alignCenter = new Uint8Array([0x1B, 0x61, 0x31]); // ESC a '1' (Center)
-            const alignLeft = new Uint8Array([0x1B, 0x61, 0x30]);   // ESC a '0' (Left)
+            // We use default left alignment ESC/POS commands to keep total control over custom margins
             const boldOn = new Uint8Array([0x1B, 0x45, 1]);
             const boldOff = new Uint8Array([0x1B, 0x45, 0]);
-            const sizeDoubleHeight = new Uint8Array([0x1D, 0x21, 0x01]); // GS ! 1 (Double height, normal width)
-            const sizeNormal = new Uint8Array([0x1D, 0x21, 0x00]);       // Normal size
+            const sizeLarge = new Uint8Array([0x1D, 0x21, 0x11]); // GS ! 0x11 (Double height & width)
+            const sizeNormal = new Uint8Array([0x1D, 0x21, 0x00]); // Normal size
             const lineFeed = new TextEncoder().encode("\n");
 
             // Text wrapping helper to prevent messy printer auto-wraps
@@ -2010,12 +2008,29 @@ const app = {
                 return lines;
             };
 
-            const headerParts = [];
-            // 1. Initialize printer and align center natively
-            headerParts.push(new Uint8Array([0x1B, 0x40])); // ESC @ (Init)
-            headerParts.push(alignCenter);
+            // Custom manual centering helpers (using 28 character printable area + 3 spaces margin)
+            const centerDouble = (text) => {
+                const limit = 14; // Max double-width chars inside 28-char limit
+                const len = text.length;
+                if (len >= limit) return text.slice(0, limit);
+                const padLeft = Math.floor((limit - len) / 2);
+                const padRight = limit - len - padLeft;
+                return " ".repeat(padLeft) + text + " ".repeat(padRight);
+            };
 
-            // 2. Render logo image at the very top center if exists
+            const centerNormal = (text) => {
+                const limit = 28; // Max normal-width chars inside 28-char limit
+                const len = text.length;
+                if (len >= limit) return text.slice(0, limit);
+                const padLeft = Math.floor((limit - len) / 2);
+                return " ".repeat(padLeft) + text;
+            };
+
+            const headerParts = [];
+            // 1. Initialize printer (defaults to left aligned ESC a 0)
+            headerParts.push(new Uint8Array([0x1B, 0x40])); // ESC @ (Init)
+
+            // 2. Render logo image at the very top center if exists (pre-centered in getLogoEscPosBytes)
             let logoBytes = null;
             if (settings.shopLogo && settings.shopLogo.startsWith('data:image')) {
                 try {
@@ -2029,31 +2044,30 @@ const app = {
                 headerParts.push(lineFeed);
             }
 
-            // 3. Shop Name (Bold & Double Height only, to prevent wrapping cut-offs)
-            headerParts.push(sizeDoubleHeight);
-            headerParts.push(boldOn);
-            const shopNameLines = wrapText(settings.shopName || "ARUMMANIS", 28);
+            // 3. Shop Name (Centered, Bold, Double Width & Height)
+            const shopNameLines = wrapText(settings.shopName || "ARUMMANIS", 14);
             shopNameLines.forEach(line => {
-                headerParts.push(new TextEncoder().encode(line + "\n"));
+                headerParts.push(new TextEncoder().encode("   ")); // Left margin
+                headerParts.push(sizeLarge);
+                headerParts.push(boldOn);
+                headerParts.push(new TextEncoder().encode(centerDouble(line)));
+                headerParts.push(boldOff);
+                headerParts.push(sizeNormal);
+                headerParts.push(lineFeed);
             });
-            headerParts.push(boldOff);
-            headerParts.push(sizeNormal);
 
-            // 4. Shop Address (Normal size, centered, auto-wrapped to 28 chars to fit nicely)
+            // 4. Shop Address (Centered, normal size, wrapped to 28 chars)
             if (settings.shopAddress) {
                 const addressLines = wrapText(settings.shopAddress, 28);
                 addressLines.forEach(line => {
-                    headerParts.push(new TextEncoder().encode(line + "\n"));
+                    headerParts.push(new TextEncoder().encode("   " + centerNormal(line) + "\n"));
                 });
             }
 
-            // 5. Shop Phone (Normal size, centered)
+            // 5. Shop Phone (Centered, normal size)
             if (settings.shopPhone) {
-                headerParts.push(new TextEncoder().encode("Telp: " + settings.shopPhone + "\n"));
+                headerParts.push(new TextEncoder().encode("   " + centerNormal("Telp: " + settings.shopPhone) + "\n"));
             }
-
-            // 6. Restore Left Alignment for metadata & items
-            headerParts.push(alignLeft);
 
             // Build receipt body text with left-margin padding (3 spaces)
             let bodyTxt = "";
@@ -2106,16 +2120,12 @@ const app = {
                 const totalPaid = trx.cash || 0;
                 const debt = trx.remainingDebt !== undefined ? trx.remainingDebt : Math.max(0, trx.total - totalPaid);
                 
-                footerParts.push(alignCenter);
-                footerParts.push(boldOn);
-                footerParts.push(new TextEncoder().encode(debt === 0 ? "STATUS: LUNAS\n" : "STATUS: BELUM LUNAS\n"));
-                footerParts.push(boldOff);
-                footerParts.push(new TextEncoder().encode("----------------------------\n"));
+                footerParts.push(new TextEncoder().encode("   " + centerNormal(debt === 0 ? "STATUS: LUNAS" : "STATUS: BELUM LUNAS") + "\n"));
+                footerParts.push(new TextEncoder().encode("   ----------------------------\n"));
             }
 
             // Pesan Penutup Struk (Center, normal size)
-            footerParts.push(alignCenter);
-            footerParts.push(new TextEncoder().encode(settings.receiptFooter || "Terima Kasih!"));
+            footerParts.push(new TextEncoder().encode("   " + centerNormal(settings.receiptFooter || "Terima Kasih!") + "\n"));
             footerParts.push(new Uint8Array([0x0A, 0x0A, 0x0A, 0x0A])); // Feed lines for physical cutting
 
             // Gabungkan semua Uint8Array secara berurutan
@@ -2149,25 +2159,49 @@ const app = {
             const img = new Image();
             img.onload = () => {
                 const canvas = document.createElement('canvas');
-                const width = 128;
-                const height = Math.round(img.height * (width / img.width));
-                canvas.width = width;
-                canvas.height = height;
+                // Set total canvas width to exactly 384 pixels (48 bytes) for standard 58mm paper.
+                // This centers the logo image natively without needing printer alignment commands.
+                const canvasWidth = 384; 
+                const logoWidth = 144; // Lebar logo yang pas (18 byte)
+                const logoHeight = Math.round(img.height * (logoWidth / img.width));
+
+                canvas.width = canvasWidth;
+                canvas.height = logoHeight;
+
                 const ctx = canvas.getContext('2d');
-                ctx.drawImage(img, 0, 0, width, height);
-                const imgData = ctx.getImageData(0, 0, width, height);
+                // Fill background with white to avoid transparent pixel issues
+                ctx.fillStyle = '#FFFFFF';
+                ctx.fillRect(0, 0, canvasWidth, logoHeight);
+
+                // Draw logo in the center of the 384px canvas
+                const xOffset = Math.floor((canvasWidth - logoWidth) / 2);
+                ctx.drawImage(img, xOffset, 0, logoWidth, logoHeight);
+
+                const imgData = ctx.getImageData(0, 0, canvasWidth, logoHeight);
                 const pixels = imgData.data;
-                const bytesWidth = width / 8;
+                const bytesWidth = canvasWidth / 8; // 48 bytes
                 const escposData = [];
-                escposData.push(0x1D, 0x76, 0x30, 0, bytesWidth & 0xFF, (bytesWidth >> 8) & 0xFF, height & 0xFF, (height >> 8) & 0xFF);
-                for (let y = 0; y < height; y++) {
+
+                // ESC/POS Command: GS v 0 m xL xH yL yH d1...dk
+                escposData.push(0x1D, 0x76, 0x30, 0, bytesWidth & 0xFF, (bytesWidth >> 8) & 0xFF, logoHeight & 0xFF, (logoHeight >> 8) & 0xFF);
+
+                for (let y = 0; y < logoHeight; y++) {
                     for (let x = 0; x < bytesWidth; x++) {
                         let byteVal = 0;
                         for (let bit = 0; bit < 8; bit++) {
                             const pixelX = x * 8 + bit;
-                            const idx = (y * width + pixelX) * 4;
-                            const gray = (pixels[idx] * 0.299 + pixels[idx + 1] * 0.587 + pixels[idx + 2] * 0.114);
-                            if (pixels[idx + 3] >= 128 && gray < 128) byteVal |= (1 << (7 - bit));
+                            const idx = (y * canvasWidth + pixelX) * 4;
+                            const r = pixels[idx];
+                            const g = pixels[idx + 1];
+                            const b = pixels[idx + 2];
+                            const alpha = pixels[idx + 3];
+
+                            const gray = (r * 0.299 + g * 0.587 + b * 0.114);
+                            const isBlack = (alpha >= 128 && gray < 128);
+
+                            if (isBlack) {
+                                byteVal |= (1 << (7 - bit));
+                            }
                         }
                         escposData.push(byteVal);
                     }
