@@ -921,8 +921,14 @@ const app = {
         const rc = document.getElementById('receiptContent');
         const settings = this.state.settings || { shopName: 'Arummanis', shopLogo: '🍬', cashierName: 'Admin' };
         
+        let logoHtml = `<h2>🍬 ${settings.shopName || 'ARUMMANIS'}</h2>`;
+        if (settings.shopLogo && settings.shopLogo.startsWith('data:image')) {
+            logoHtml = `<img src="${settings.shopLogo}" style="max-height: 50px; max-width: 100px; display: block; margin: 0 auto 10px; object-fit: contain;">
+                        <h2 style="margin-top: 5px;">${settings.shopName || 'ARUMMANIS'}</h2>`;
+        }
+        
         let html = `
-            <h2>${settings.shopLogo || '🍬'} ${settings.shopName || 'ARUMMANIS'}</h2>
+            ${logoHtml}
             ${settings.shopAddress ? `<div style="text-align: center; font-size: 0.8rem; color: #64748b; margin-top: -5px; margin-bottom: 10px;">${settings.shopAddress}</div>` : ''}
             <div class="r-row"><span>No:</span> <span>${trx.id}</span></div>
             <div class="r-row"><span>Tgl:</span> <span>${new Date(trx.timestamp).toLocaleString('id-ID')}</span></div>
@@ -1547,18 +1553,69 @@ const app = {
         document.getElementById('setShopName').value = this.state.settings.shopName || '';
         document.getElementById('setShopAddress').value = this.state.settings.shopAddress || '';
         document.getElementById('setShopPhone').value = this.state.settings.shopPhone || '';
-        document.getElementById('setShopLogo').value = this.state.settings.shopLogo || '';
         document.getElementById('setCashierName').value = this.state.settings.cashierName || '';
         document.getElementById('setShopWA').value = this.state.settings.shopWA || '';
         document.getElementById('setReceiptFooter').value = this.state.settings.receiptFooter || '';
         document.getElementById('setGasUrl').value = localStorage.getItem('pos_gas_url') || '';
+
+        // Tampilkan preview logo jika ada
+        const logoPreviewImg = document.getElementById('logoPreviewImg');
+        const logoPreviewContainer = document.getElementById('logoPreviewContainer');
+        if (this.state.settings.shopLogo && this.state.settings.shopLogo.startsWith('data:image')) {
+            logoPreviewImg.src = this.state.settings.shopLogo;
+            logoPreviewContainer.classList.remove('hidden');
+        } else {
+            logoPreviewImg.src = '';
+            logoPreviewContainer.classList.add('hidden');
+        }
+    },
+
+    handleLogoUpload: function(event) {
+        const file = event.target.files[0];
+        if (!file) return;
+
+        if (!file.type.startsWith('image/')) {
+            return Swal.fire('Error', 'File harus berupa gambar JPG/PNG!', 'error');
+        }
+
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            const img = new Image();
+            img.onload = () => {
+                // Resize logo ke lebar maksimal 128px demi efisiensi storage
+                const canvas = document.createElement('canvas');
+                const maxW = 128;
+                const scale = maxW / img.width;
+                canvas.width = maxW;
+                canvas.height = Math.round(img.height * scale);
+
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+                const compressedBase64 = canvas.toDataURL('image/png');
+                this.state.settings.shopLogo = compressedBase64;
+
+                const previewImg = document.getElementById('logoPreviewImg');
+                const previewContainer = document.getElementById('logoPreviewContainer');
+                previewImg.src = compressedBase64;
+                previewContainer.classList.remove('hidden');
+            };
+            img.src = e.target.result;
+        };
+        reader.readAsDataURL(file);
+    },
+
+    removeLogo: function() {
+        this.state.settings.shopLogo = '';
+        document.getElementById('logoPreviewImg').src = '';
+        document.getElementById('logoPreviewContainer').classList.add('hidden');
+        document.getElementById('setShopLogoFile').value = '';
     },
 
     saveSettings: function() {
         const name = document.getElementById('setShopName').value.trim();
         const address = document.getElementById('setShopAddress').value.trim();
         const phone = document.getElementById('setShopPhone').value.trim();
-        const logo = document.getElementById('setShopLogo').value.trim();
         const cashier = document.getElementById('setCashierName').value.trim();
         const wa = document.getElementById('setShopWA').value.trim();
         const footer = document.getElementById('setReceiptFooter').value.trim();
@@ -1566,15 +1623,12 @@ const app = {
 
         if (!name) return Swal.fire('Error', 'Nama Usaha wajib diisi!', 'warning');
 
-        this.state.settings = {
-            shopName: name,
-            shopAddress: address,
-            shopPhone: phone,
-            shopLogo: logo,
-            cashierName: cashier,
-            shopWA: wa,
-            receiptFooter: footer
-        };
+        this.state.settings.shopName = name;
+        this.state.settings.shopAddress = address;
+        this.state.settings.shopPhone = phone;
+        this.state.settings.cashierName = cashier;
+        this.state.settings.shopWA = wa;
+        this.state.settings.receiptFooter = footer;
 
         localStorage.setItem('pos_settings', JSON.stringify(this.state.settings));
         
@@ -1973,19 +2027,83 @@ const app = {
                 txt += "   " + makePrintRow("Kembali:", formatRupiah(trx.change || 0), 28);
             }
             
-            // Footer
             txt += "   ----------------------------\n";
-            txt += "   " + makeCenterRow(settings.receiptFooter || "Terima Kasih!", 28) + "\n\n\n";
+            txt += "   " + makeCenterRow(settings.receiptFooter || "Terima Kasih!", 28) + "\n\n";
+
+            let logoBytes = null;
+            if (settings.shopLogo && settings.shopLogo.startsWith('data:image')) {
+                try {
+                    logoBytes = await this.getLogoEscPosBytes(settings.shopLogo);
+                } catch (logoErr) {
+                    console.error("Gagal mengonversi logo ke ESC/POS:", logoErr);
+                }
+            }
 
             const data = new TextEncoder().encode(txt);
-            for (let i = 0; i < data.length; i += 256) {
-                await printChar.writeValue(data.slice(i, i + 256));
+            let finalBytes = data;
+            if (logoBytes) {
+                const centerAlignCmd = new Uint8Array([0x1B, 0x61, 1]);
+                const leftAlignCmd = new Uint8Array([0x1B, 0x61, 0]);
+                const feedLines = new Uint8Array([0x0A, 0x0A, 0x0A]);
+                
+                const merged = new Uint8Array(data.length + centerAlignCmd.length + logoBytes.length + leftAlignCmd.length + feedLines.length);
+                merged.set(data);
+                merged.set(centerAlignCmd, data.length);
+                merged.set(logoBytes, data.length + centerAlignCmd.length);
+                merged.set(leftAlignCmd, data.length + centerAlignCmd.length + logoBytes.length);
+                merged.set(feedLines, data.length + centerAlignCmd.length + logoBytes.length + leftAlignCmd.length);
+                finalBytes = merged;
+            } else {
+                const feedLines = new Uint8Array([0x0A, 0x0A, 0x0A]);
+                const merged = new Uint8Array(data.length + feedLines.length);
+                merged.set(data);
+                merged.set(feedLines, data.length);
+                finalBytes = merged;
+            }
+
+            for (let i = 0; i < finalBytes.length; i += 256) {
+                await printChar.writeValue(finalBytes.slice(i, i + 256));
                 await new Promise(r => setTimeout(r, 50));
             }
             Swal.fire('Berhasil', 'Struk dicetak', 'success');
         } catch (e) {
             if (e.name !== 'NotFoundError') Swal.fire('Gagal', e.message, 'error');
         }
+    },
+
+    getLogoEscPosBytes: function(base64Str) {
+        return new Promise((resolve, reject) => {
+            const img = new Image();
+            img.onload = () => {
+                const canvas = document.createElement('canvas');
+                const width = 128;
+                const height = Math.round(img.height * (width / img.width));
+                canvas.width = width;
+                canvas.height = height;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0, width, height);
+                const imgData = ctx.getImageData(0, 0, width, height);
+                const pixels = imgData.data;
+                const bytesWidth = width / 8;
+                const escposData = [];
+                escposData.push(0x1D, 0x76, 0x30, 0, bytesWidth & 0xFF, (bytesWidth >> 8) & 0xFF, height & 0xFF, (height >> 8) & 0xFF);
+                for (let y = 0; y < height; y++) {
+                    for (let x = 0; x < bytesWidth; x++) {
+                        let byteVal = 0;
+                        for (let bit = 0; bit < 8; bit++) {
+                            const pixelX = x * 8 + bit;
+                            const idx = (y * width + pixelX) * 4;
+                            const gray = (pixels[idx] * 0.299 + pixels[idx + 1] * 0.587 + pixels[idx + 2] * 0.114);
+                            if (pixels[idx + 3] >= 128 && gray < 128) byteVal |= (1 << (7 - bit));
+                        }
+                        escposData.push(byteVal);
+                    }
+                }
+                resolve(new Uint8Array(escposData));
+            };
+            img.onerror = (err) => reject(err);
+            img.src = base64Str;
+        });
     }
 };
 

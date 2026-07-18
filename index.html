@@ -362,8 +362,13 @@
                             <input type="text" id="setShopPhone" class="input-full" placeholder="Cth: 08123456789">
                         </div>
                         <div class="form-group">
-                            <label>Logo Usaha (Emoji / Teks Singkat)</label>
-                            <input type="text" id="setShopLogo" class="input-full" placeholder="Cth: 🍬">
+                            <label>Logo Usaha (Gambar JPG/PNG)</label>
+                            <input type="file" id="setShopLogoFile" accept="image/png, image/jpeg" style="display: none;" onchange="app.handleLogoUpload(event)">
+                            <button type="button" class="btn btn-secondary btn-block" onclick="document.getElementById('setShopLogoFile').click()" style="padding: 10px;"><i class="fas fa-upload"></i> Pilih File Gambar Logo</button>
+                            <div id="logoPreviewContainer" class="mt-1 hidden" style="display: flex; align-items: center; justify-content: center; gap: 15px; background: #f8fafc; border: 1px solid #cbd5e1; padding: 8px; border-radius: 8px;">
+                                <img id="logoPreviewImg" src="" style="max-height: 60px; max-width: 120px; border-radius: 4px; object-fit: contain;">
+                                <button type="button" class="btn btn-danger btn-sm" onclick="app.removeLogo()" style="padding: 6px 12px; margin: 0;"><i class="fas fa-trash"></i></button>
+                            </div>
                         </div>
 
                         <h3 class="mb-1 mt-1" style="border-bottom: 2px solid #f1f5f9; padding-bottom: 5px; color: var(--primary);"><i class="fas fa-user-tie"></i> Kasir & Operasional</h3>
