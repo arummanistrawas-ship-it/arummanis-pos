@@ -65,6 +65,9 @@ body { background: linear-gradient(135deg, #fdfbfb 0%, #ebedee 100%); color: var
 /* Dashboard Grid */
 .dashboard-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
 .dash-card { background: white; border-radius: 16px; padding: 2rem 1rem; text-align: center; cursor: pointer; box-shadow: 0 4px 15px rgba(0,0,0,0.05); transition: 0.3s; border: 2px solid transparent; }
+.dash-card.full-width { grid-column: span 2; padding: 1.2rem 1rem; display: flex; align-items: center; justify-content: center; gap: 15px; }
+.dash-card.full-width i { margin-bottom: 0; font-size: 1.8rem; }
+.dash-card.full-width h3 { font-size: 1.05rem; }
 .dash-card:hover { transform: translateY(-5px); border-color: var(--primary); }
 .dash-card i { font-size: 2.5rem; color: var(--primary); margin-bottom: 1rem; }
 .dash-card h3 { font-size: 1.1rem; color: var(--dark); }

@@ -1,5 +1,5 @@
 // Konfigurasi GAS Web App URL
-const GAS_URL = 'https://script.google.com/macros/s/AKfycbxShfwNUtXVeZB_hReUyB8y5oRplJp2y2j-p-eoyiOmZcx_Ad6dhQZFlMIEsD2xgEMc-Q/exec';
+let GAS_URL = localStorage.getItem('pos_gas_url') || 'https://script.google.com/macros/s/AKfycbxShfwNUtXVeZB_hReUyB8y5oRplJp2y2j-p-eoyiOmZcx_Ad6dhQZFlMIEsD2xgEMc-Q/exec';
 
 // Utility format uang
 const formatRupiah = (number) => {
@@ -96,7 +96,16 @@ const app = {
         bluetoothDevice: null,
         bluetoothChar: null,
         checkoutMode: 'new',
-        repaymentTransactionId: null
+        repaymentTransactionId: null,
+        settings: {
+            shopName: 'Arummanis',
+            shopAddress: 'Camilan Manis & Gurih',
+            shopPhone: '08123456789',
+            shopLogo: '🍬',
+            cashierName: 'Admin',
+            shopWA: '',
+            receiptFooter: 'Terima Kasih!'
+        }
     },
 
     init: async function() {
@@ -172,6 +181,7 @@ const app = {
             if(viewId === 'history') { titleEl.textContent = 'Histori Transaksi'; this.renderTransactionList('all', 'transactionListContainer', 'searchTransaction'); }
             if(viewId === 'debt') { titleEl.textContent = 'Belum Lunas (Kasbon)'; this.renderTransactionList('Kasbon', 'debtListContainer', 'searchDebt'); }
             if(viewId === 'products') { titleEl.textContent = 'Manajemen Produk'; this.renderProductList(); }
+            if(viewId === 'settings') { titleEl.textContent = 'Pengaturan'; this.showSettingsForm(); }
         }
     },
 
@@ -179,6 +189,12 @@ const app = {
         this.state.products = JSON.parse(localStorage.getItem('pos_products') || '[]');
         this.state.transactions = JSON.parse(localStorage.getItem('pos_transactions') || '[]');
         this.state.syncQueue = JSON.parse(localStorage.getItem('pos_queue') || '[]');
+        
+        const savedSettings = localStorage.getItem('pos_settings');
+        if (savedSettings) {
+            this.state.settings = JSON.parse(savedSettings);
+        }
+        
         this.updateProductDatalist();
         this.checkOfflineQueue();
         
@@ -903,12 +919,14 @@ const app = {
         this.navigate('receipt');
         this.state.lastTransaction = trx; // untuk keperluan print
         const rc = document.getElementById('receiptContent');
+        const settings = this.state.settings || { shopName: 'Arummanis', shopLogo: '🍬', cashierName: 'Admin' };
         
         let html = `
-            <h2>🍬 ARUMMANIS</h2>
+            <h2>${settings.shopLogo || '🍬'} ${settings.shopName || 'ARUMMANIS'}</h2>
+            ${settings.shopAddress ? `<div style="text-align: center; font-size: 0.8rem; color: #64748b; margin-top: -5px; margin-bottom: 10px;">${settings.shopAddress}</div>` : ''}
             <div class="r-row"><span>No:</span> <span>${trx.id}</span></div>
             <div class="r-row"><span>Tgl:</span> <span>${new Date(trx.timestamp).toLocaleString('id-ID')}</span></div>
-            <div class="r-row"><span>Kasir:</span> <span>Admin</span></div>
+            <div class="r-row"><span>Kasir:</span> <span>${settings.cashierName || 'Admin'}</span></div>
             <div class="r-row"><span>Pelanggan:</span> <span>${trx.customer}</span></div>
             <hr>
         `;
@@ -952,7 +970,7 @@ const app = {
             `;
         }
         
-        html += `<hr><div class="text-center">Terima Kasih!</div>`;
+        html += `<hr><div class="text-center">${settings.receiptFooter || 'Terima Kasih!'}</div>`;
         rc.innerHTML = html;
     },
 
@@ -1525,6 +1543,73 @@ const app = {
         }
     },
 
+    showSettingsForm: function() {
+        document.getElementById('setShopName').value = this.state.settings.shopName || '';
+        document.getElementById('setShopAddress').value = this.state.settings.shopAddress || '';
+        document.getElementById('setShopPhone').value = this.state.settings.shopPhone || '';
+        document.getElementById('setShopLogo').value = this.state.settings.shopLogo || '';
+        document.getElementById('setCashierName').value = this.state.settings.cashierName || '';
+        document.getElementById('setShopWA').value = this.state.settings.shopWA || '';
+        document.getElementById('setReceiptFooter').value = this.state.settings.receiptFooter || '';
+        document.getElementById('setGasUrl').value = localStorage.getItem('pos_gas_url') || '';
+    },
+
+    saveSettings: function() {
+        const name = document.getElementById('setShopName').value.trim();
+        const address = document.getElementById('setShopAddress').value.trim();
+        const phone = document.getElementById('setShopPhone').value.trim();
+        const logo = document.getElementById('setShopLogo').value.trim();
+        const cashier = document.getElementById('setCashierName').value.trim();
+        const wa = document.getElementById('setShopWA').value.trim();
+        const footer = document.getElementById('setReceiptFooter').value.trim();
+        const gasUrl = document.getElementById('setGasUrl').value.trim();
+
+        if (!name) return Swal.fire('Error', 'Nama Usaha wajib diisi!', 'warning');
+
+        this.state.settings = {
+            shopName: name,
+            shopAddress: address,
+            shopPhone: phone,
+            shopLogo: logo,
+            cashierName: cashier,
+            shopWA: wa,
+            receiptFooter: footer
+        };
+
+        localStorage.setItem('pos_settings', JSON.stringify(this.state.settings));
+        
+        if (gasUrl) {
+            localStorage.setItem('pos_gas_url', gasUrl);
+            GAS_URL = gasUrl;
+        } else {
+            localStorage.removeItem('pos_gas_url');
+            GAS_URL = 'https://script.google.com/macros/s/AKfycbxShfwNUtXVeZB_hReUyB8y5oRplJp2y2j-p-eoyiOmZcx_Ad6dhQZFlMIEsD2xgEMc-Q/exec';
+        }
+
+        Swal.fire('Berhasil', 'Semua pengaturan berhasil disimpan!', 'success').then(() => {
+            this.navigate('dashboard');
+        });
+    },
+
+    resetLocalData: function() {
+        Swal.fire({
+            title: 'Hapus Semua Data Lokal?',
+            text: 'Tindakan ini akan mengosongkan transaksi offline, produk ter-cache, dan pengaturan lokal di perangkat ini. Data di Google Sheets akan tetap aman.',
+            icon: 'warning',
+            showCancelButton: true,
+            confirmButtonColor: '#d33',
+            confirmButtonText: 'Ya, Hapus Semua!',
+            cancelButtonText: 'Batal'
+        }).then((result) => {
+            if (result.isConfirmed) {
+                localStorage.clear();
+                Swal.fire('Terhapus', 'Semua database lokal telah dibersihkan. Aplikasi akan dimuat ulang.', 'success').then(() => {
+                    window.location.reload();
+                });
+            }
+        });
+    },
+
     syncDataManual: async function() {
         if (!navigator.onLine) {
             Swal.fire('Offline', 'Tidak dapat melakukan sinkronisasi karena perangkat Anda sedang offline.', 'warning');
@@ -1693,10 +1778,13 @@ const app = {
         const trx = this.state.lastTransaction;
         if (!trx) return;
         
-        let text = `🍬 *ARUMMANIS* - Struk Transaksi\n`;
+        const settings = this.state.settings || { shopName: 'Arummanis', shopLogo: '🍬', cashierName: 'Admin' };
+        let text = `${settings.shopLogo || '🍬'} *${(settings.shopName || 'ARUMMANIS').toUpperCase()}*\n`;
+        if (settings.shopAddress) text += `📍 ${settings.shopAddress}\n`;
         text += `━━━━━━━━━━━━━━━━━━━━\n`;
         text += `No   : ${trx.id}\n`;
         text += `Tgl  : ${new Date(trx.timestamp).toLocaleString('id-ID')}\n`;
+        text += `Kasir: ${settings.cashierName || 'Admin'}\n`;
         text += `Pel  : ${trx.customer}\n`;
         text += `━━━━━━━━━━━━━━━━━━━━\n`;
         trx.items.forEach(i => {
@@ -1726,7 +1814,7 @@ const app = {
             text += `*STATUS  : ${debt === 0 ? 'LUNAS' : 'BELUM LUNAS'}*\n`;
         }
         text += `━━━━━━━━━━━━━━━━━━━━\n`;
-        text += `Terima kasih sudah berbelanja! 🙏`;
+        text += `${settings.receiptFooter || 'Terima kasih sudah berbelanja! 🙏'}`;
         
         const encoded = encodeURIComponent(text);
         window.open(`https://wa.me/?text=${encoded}`, '_blank');
@@ -1833,13 +1921,20 @@ const app = {
             const ESC = '\x1B'; const textBoldOn = ESC + 'E\x01'; const textBoldOff = ESC + 'E\x00';
             let txt = ESC + '@' + ESC + 'a\x00'; // Set default left alignment secara eksplisit
             
+            const settings = this.state.settings || { shopName: 'Arummanis', shopAddress: 'Camilan Manis & Gurih', cashierName: 'Admin' };
+            
             // Header struk (Dibuat center manual dengan lebar 28 karakter + 3 spasi margin untuk mengimbangi pergeseran fisik printer)
-            txt += textBoldOn + "   " + makeCenterRow("ARUMMANIS", 28) + textBoldOff;
-            txt += "   " + makeCenterRow("Camilan Manis & Gurih", 28);
+            txt += textBoldOn + "   " + makeCenterRow(settings.shopName || "ARUMMANIS", 28) + textBoldOff;
+            if (settings.shopAddress) {
+                txt += "   " + makeCenterRow(settings.shopAddress, 28);
+            }
+            if (settings.shopPhone) {
+                txt += "   " + makeCenterRow("Telp: " + settings.shopPhone, 28);
+            }
             txt += "   ----------------------------\n"; // 3 spasi + 28 strip
             
             // Metadata transaksi
-            txt += `   No : ${trx.id}\n   Tgl: ${new Date(trx.timestamp).toLocaleString('id-ID')}\n   Pel: ${trx.customer}\n`;
+            txt += `   No   : ${trx.id}\n   Tgl  : ${new Date(trx.timestamp).toLocaleString('id-ID')}\n   Kasir: ${settings.cashierName || 'Admin'}\n   Pel  : ${trx.customer}\n`;
             txt += "   ----------------------------\n";
             
             // Daftar barang belanjaan
@@ -1880,7 +1975,7 @@ const app = {
             
             // Footer
             txt += "   ----------------------------\n";
-            txt += "   " + makeCenterRow("Terima Kasih!", 28) + "\n\n\n";
+            txt += "   " + makeCenterRow(settings.receiptFooter || "Terima Kasih!", 28) + "\n\n\n";
 
             const data = new TextEncoder().encode(txt);
             for (let i = 0; i < data.length; i += 256) {

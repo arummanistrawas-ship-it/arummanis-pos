@@ -79,6 +79,10 @@
                         <i class="fas fa-box-open"></i>
                         <h3>Data Produk</h3>
                     </div>
+                    <div class="dash-card full-width" onclick="app.navigate('settings')">
+                        <i class="fas fa-cog"></i>
+                        <h3>Pengaturan</h3>
+                    </div>
                 </div>
                 <div class="version-info" style="text-align: center; color: #888; font-size: 0.8rem; margin-top: 2.5rem; padding: 10px; border-top: 1px dashed #eee;">
                     <i class="fas fa-code-branch"></i> Versi: 8.0 — Edit Produk Tanpa Barcode
@@ -339,6 +343,63 @@
                     </div>
                 </div>
             </div>
+
+            <!-- 7. SETTINGS / PENGATURAN -->
+            <section id="view-settings" class="view hidden">
+                <div class="card">
+                    <form id="settingsForm" onsubmit="event.preventDefault(); app.saveSettings();">
+                        <h3 class="mb-1" style="border-bottom: 2px solid #f1f5f9; padding-bottom: 5px; color: var(--primary);"><i class="fas fa-store"></i> Profil Usaha</h3>
+                        <div class="form-group">
+                            <label>Nama Usaha</label>
+                            <input type="text" id="setShopName" class="input-full" placeholder="Cth: Arummanis" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Alamat Usaha</label>
+                            <input type="text" id="setShopAddress" class="input-full" placeholder="Cth: Jl. Raya Trawas No. 10">
+                        </div>
+                        <div class="form-group">
+                            <label>No. HP / Telepon</label>
+                            <input type="text" id="setShopPhone" class="input-full" placeholder="Cth: 08123456789">
+                        </div>
+                        <div class="form-group">
+                            <label>Logo Usaha (Emoji / Teks Singkat)</label>
+                            <input type="text" id="setShopLogo" class="input-full" placeholder="Cth: 🍬">
+                        </div>
+
+                        <h3 class="mb-1 mt-1" style="border-bottom: 2px solid #f1f5f9; padding-bottom: 5px; color: var(--primary);"><i class="fas fa-user-tie"></i> Kasir & Operasional</h3>
+                        <div class="form-group">
+                            <label>Nama Kasir Aktif</label>
+                            <input type="text" id="setCashierName" class="input-full" placeholder="Cth: Admin" required>
+                        </div>
+                        <div class="form-group">
+                            <label>No. WhatsApp Toko (Untuk share struk)</label>
+                            <input type="text" id="setShopWA" class="input-full" placeholder="Cth: 628123456789 (Awali dengan 62)">
+                        </div>
+
+                        <h3 class="mb-1 mt-1" style="border-bottom: 2px solid #f1f5f9; padding-bottom: 5px; color: var(--primary);"><i class="fas fa-receipt"></i> Tampilan Struk</h3>
+                        <div class="form-group">
+                            <label>Pesan Penutup (Footer Struk)</label>
+                            <input type="text" id="setReceiptFooter" class="input-full" placeholder="Cth: Terima Kasih!" required>
+                        </div>
+
+                        <h3 class="mb-1 mt-1" style="border-bottom: 2px solid #f1f5f9; padding-bottom: 5px; color: var(--primary);"><i class="fas fa-server"></i> Koneksi Server</h3>
+                        <div class="form-group">
+                            <label>Google Apps Script Web App URL</label>
+                            <input type="text" id="setGasUrl" class="input-full" placeholder="https://script.google.com/macros/s/.../exec">
+                        </div>
+
+                        <div class="action-buttons mt-1">
+                            <button type="submit" class="btn btn-success btn-block" style="padding: 12px; font-weight: bold;"><i class="fas fa-save"></i> Simpan Semua Pengaturan</button>
+                        </div>
+                    </form>
+
+                    <div style="margin-top: 2.5rem; border-top: 2px dashed #f1f5f9; padding-top: 1.5rem;">
+                        <h3 class="mb-1" style="color: var(--danger);"><i class="fas fa-exclamation-triangle"></i> Zona Bahaya</h3>
+                        <p style="font-size: 0.9rem; color: #64748b; margin-bottom: 1rem;">Tindakan di bawah ini akan menghapus database lokal di browser HP ini. Data yang belum tersinkronisasi ke Google Sheets akan hilang.</p>
+                        <button onclick="app.resetLocalData()" class="btn btn-danger btn-block" style="padding: 12px; font-weight: bold;"><i class="fas fa-trash-alt"></i> Reset Database & Hapus Cache Lokal</button>
+                    </div>
+                </div>
+            </section>
 
         </main>
     </div>
