@@ -162,11 +162,14 @@ const app = {
         }
         
         const view = document.getElementById(`view-${viewId}`);
-        if(view) {
-            view.classList.remove('hidden');
-            // Sedikit delay agar display block diaplikasikan sebelum animasi
-            setTimeout(() => view.classList.add('active'), 10);
+        // H2 Fix: Fallback to dashboard if invalid view hash
+        if(!view) {
+            this.navigate('dashboard', false);
+            return;
         }
+        view.classList.remove('hidden');
+        // Sedikit delay agar display block diaplikasikan sebelum animasi
+        setTimeout(() => view.classList.add('active'), 10);
         
         this.state.currentView = viewId;
         
@@ -195,16 +198,24 @@ const app = {
     },
 
     loadData: async function() {
-        this.state.products = JSON.parse(localStorage.getItem('pos_products') || '[]');
-        this.state.transactions = JSON.parse(localStorage.getItem('pos_transactions') || '[]');
-        this.state.syncQueue = JSON.parse(localStorage.getItem('pos_queue') || '[]');
+        // C2 Fix: Try/catch to prevent crash on corrupted localStorage
+        try {
+            this.state.products = JSON.parse(localStorage.getItem('pos_products') || '[]');
+        } catch (e) { this.state.products = []; console.error('Corrupt pos_products, reset:', e); }
+        try {
+            this.state.transactions = JSON.parse(localStorage.getItem('pos_transactions') || '[]');
+        } catch (e) { this.state.transactions = []; console.error('Corrupt pos_transactions, reset:', e); }
+        try {
+            this.state.syncQueue = JSON.parse(localStorage.getItem('pos_queue') || '[]');
+        } catch (e) { this.state.syncQueue = []; console.error('Corrupt pos_queue, reset:', e); }
         
-        const savedSettings = localStorage.getItem('pos_settings');
-        if (savedSettings) {
-            this.state.settings = JSON.parse(savedSettings);
-        }
+        try {
+            const savedSettings = localStorage.getItem('pos_settings');
+            if (savedSettings) {
+                this.state.settings = JSON.parse(savedSettings);
+            }
+        } catch (e) { console.error('Corrupt pos_settings, using defaults:', e); }
         
-        this.updateProductDatalist();
         this.checkOfflineQueue();
         
         if (navigator.onLine && GAS_URL !== 'YOUR_GOOGLE_APPS_SCRIPT_WEB_APP_URL') {
@@ -214,7 +225,6 @@ const app = {
                 if (resData.status === 'success' && resData.data) {
                     this.state.products = resData.data;
                     this.saveData();
-                    this.updateProductDatalist();
                 }
             } catch (error) {
                 console.error('Gagal memuat produk dari Sheets:', error);
@@ -223,10 +233,12 @@ const app = {
             this.syncData();
         }
     },
+    // C1 Fix: saveData now also persists settings
     saveData: function() {
         localStorage.setItem('pos_products', JSON.stringify(this.state.products));
         localStorage.setItem('pos_transactions', JSON.stringify(this.state.transactions));
         localStorage.setItem('pos_queue', JSON.stringify(this.state.syncQueue));
+        localStorage.setItem('pos_settings', JSON.stringify(this.state.settings));
     },
 
     // --- POS & Cart Logic ---
@@ -250,9 +262,10 @@ const app = {
                 return;
             }
 
+            // H1 Fix: String() to prevent crash when Barcode_ID is numeric
             const matches = this.state.products.filter(p => 
-                (p.Barcode_ID && p.Barcode_ID.toLowerCase().includes(term)) || 
-                (p.Nama_Camilan && p.Nama_Camilan.toLowerCase().includes(term))
+                (p.Barcode_ID && String(p.Barcode_ID).toLowerCase().includes(term)) || 
+                (p.Nama_Camilan && String(p.Nama_Camilan).toLowerCase().includes(term))
             );
 
             if (matches.length === 0) {
@@ -386,23 +399,15 @@ const app = {
         });
     },
 
-    updateProductDatalist: function() {
-        const dl = document.getElementById('productList');
-        if(!dl) return;
-        dl.innerHTML = '';
-        this.state.products.forEach(p => {
-            const opt = document.createElement('option');
-            opt.value = p.Barcode_ID;
-            opt.textContent = `${p.Nama_Camilan} - Rp ${p.Harga} (Stok: ${p.Stok})`;
-            dl.appendChild(opt);
-        });
-    },
+    // M4 Fix: Removed dead datalist code (productList element doesn't exist in HTML)
+    updateProductDatalist: function() { /* no-op, search suggestions used instead */ },
 
     handleManualAdd: function() {
         const input = document.getElementById('manualBarcode').value.trim();
         if(!input) return;
         
-        const p = this.state.products.find(x => x.Barcode_ID == input || x.Nama_Camilan.toLowerCase().includes(input.toLowerCase()));
+        // H1 Fix: String() safety for Barcode_ID comparison
+        const p = this.state.products.find(x => String(x.Barcode_ID) == input || (x.Nama_Camilan && String(x.Nama_Camilan).toLowerCase().includes(input.toLowerCase())));
         if(p) {
             this.addToCart(p);
             document.getElementById('manualBarcode').value = '';
@@ -427,8 +432,9 @@ const app = {
         const item = this.state.cart.find(x => compareBarcode(x.Barcode_ID, barcode));
         if(item) {
             if(field === 'qty') {
-                const q = parseInt(value) || 1;
-                if (q <= 0) {
+                // C5 Fix: Allow qty=0 to trigger item removal (was: parseInt(0)||1 = 1)
+                const q = parseInt(value);
+                if (isNaN(q) || q <= 0) {
                     this.removeCartItem(barcode);
                     return;
                 } else {
@@ -445,9 +451,10 @@ const app = {
         if (item) {
             const val = parseInt(el.value) || 0;
             if (field === 'price') {
-                item.editPrice = val;
+                // C4 Fix: Prevent negative prices
+                item.editPrice = Math.max(0, val);
             } else if (field === 'qty') {
-                item.qty = val;
+                item.qty = Math.max(0, val);
             }
             
             // Hitung ulang total tanpa rebuild list DOM
@@ -462,12 +469,12 @@ const app = {
             const rowTotalEl = el.closest('.cart-item').querySelector('.item-header span:last-child');
             if (rowTotalEl) rowTotalEl.textContent = formatRupiah(item.editPrice * item.qty);
             
-            // Hitung Diskon
+            // Hitung Diskon (C3 Fix: clamp negative discounts)
             const dType = document.getElementById('discountType').value;
-            const dVal = parseInt(document.getElementById('discountValue').value) || 0;
+            const dVal = Math.max(0, parseInt(document.getElementById('discountValue').value) || 0);
             let discountAmount = 0;
             if (dType === 'nominal') discountAmount = dVal;
-            if (dType === 'percent') discountAmount = subtotal * (dVal / 100);
+            if (dType === 'percent') discountAmount = subtotal * (Math.min(100, dVal) / 100);
             const grandTotal = Math.max(0, subtotal - discountAmount);
             
             document.getElementById('itemCount').textContent = `${count} item`;
@@ -538,13 +545,13 @@ const app = {
             });
         }
 
-        // Hitung Diskon
+        // Hitung Diskon (C3 Fix: clamp negative discounts & cap percent at 100%)
         const dType = document.getElementById('discountType').value;
-        const dVal = parseInt(document.getElementById('discountValue').value) || 0;
+        const dVal = Math.max(0, parseInt(document.getElementById('discountValue').value) || 0);
         let discountAmount = 0;
         
         if (dType === 'nominal') discountAmount = dVal;
-        if (dType === 'percent') discountAmount = subtotal * (dVal / 100);
+        if (dType === 'percent') discountAmount = subtotal * (Math.min(100, dVal) / 100);
         
         const grandTotal = Math.max(0, subtotal - discountAmount);
         
@@ -885,6 +892,8 @@ const app = {
         };
 
         // Update local stock
+        // C7 Fix: Record batch deductions for potential rollback on editLastTransaction
+        const batchDeductions = [];
         trx.items.forEach(item => {
             const p = this.state.products.find(x => compareBarcode(x.Barcode_ID, item.Barcode_ID));
             if(p) {
@@ -894,20 +903,28 @@ const app = {
                 // Kurangi stok batch lokal secara FIFO
                 if (p.batches && Array.isArray(p.batches)) {
                     let qtyToDeduct = parseInt(item.qty);
-                    // Urutkan batch dari expired terdekat ke terjauh (FIFO)
-                    p.batches.sort((a, b) => new Date(convertDateToPickerFormat(a.expiredDate)) - new Date(convertDateToPickerFormat(b.expiredDate)));
+                    // M3 Fix: Safe date parse with fallback
+                    p.batches.sort((a, b) => {
+                        const dateA = new Date(convertDateToPickerFormat(a.expiredDate));
+                        const dateB = new Date(convertDateToPickerFormat(b.expiredDate));
+                        return (isNaN(dateA) ? Infinity : dateA) - (isNaN(dateB) ? Infinity : dateB);
+                    });
+                    const itemDeductions = [];
                     for (let b = 0; b < p.batches.length; b++) {
                         if (qtyToDeduct <= 0) break;
                         const batch = p.batches[b];
                         const deduct = Math.min(qtyToDeduct, batch.stokSisa);
                         batch.stokSisa -= deduct;
                         qtyToDeduct -= deduct;
+                        itemDeductions.push({ batchId: batch.batchId, qty: deduct });
                     }
+                    batchDeductions.push({ barcode: item.Barcode_ID, deductions: itemDeductions });
                     // Hanya pertahankan batch yang masih memiliki stok sisa
                     p.batches = p.batches.filter(b => b.stokSisa > 0);
                 }
             }
         });
+        trx.batchDeductions = batchDeductions; // Store for rollback
 
         // Insert at beginning
         this.state.transactions.unshift(trx);
@@ -928,13 +945,13 @@ const app = {
         this.navigate('receipt');
         this.state.lastTransaction = trx; // untuk keperluan print
         const rc = document.getElementById('receiptContent');
-        const settings = this.state.settings || { shopName: 'Arummanis', shopLogo: '🍬', cashierName: 'Admin' };
+        const settings = this.state.settings || { shopName: 'Kasir Manis', shopLogo: '🏪', cashierName: 'Admin' };
         
         let headerHtml = '';
         if (settings.shopLogo && settings.shopLogo.startsWith('data:image')) {
             headerHtml += `<img src="${settings.shopLogo}" style="max-height: 60px; max-width: 120px; display: block; margin: 0 auto 8px; object-fit: contain;">`;
         } else {
-            headerHtml += `<div style="font-size: 2rem; text-align: center; margin-bottom: 5px;">🍬</div>`;
+            headerHtml += `<div style="font-size: 2rem; text-align: center; margin-bottom: 5px;">🏪</div>`;
         }
         
         headerHtml += `<h2 style="font-size: 1.4rem; font-weight: bold; text-align: center; margin: 0 0 4px 0; color: var(--dark);">${settings.shopName || 'ARUMMANIS'}</h2>`;
@@ -977,6 +994,9 @@ const app = {
         if (trx.method === 'Tunai') {
             html += `<div class="r-row"><span>Tunai:</span> <span>${formatRupiah(trx.cash)}</span></div>
                      <div class="r-row"><span>Kembali:</span> <span>${formatRupiah(trx.change)}</span></div>`;
+        } else if (trx.method === 'Transfer' || trx.method === 'QRIS') {
+            // H3 Fix: Show payment info for Transfer/QRIS
+            html += `<div class="r-row"><span>Total Dibayar:</span> <span>${formatRupiah(trx.total)}</span></div>`;
         } else if (trx.method === 'Kasbon') {
             const initDP = trx.initialDeposit || 0;
             const totalPaid = trx.cash || 0;
@@ -1022,8 +1042,29 @@ const app = {
                 // Kembalikan stok
                 trx.items.forEach(item => {
                     const p = this.state.products.find(x => compareBarcode(x.Barcode_ID, item.Barcode_ID));
-                    if(p) p.Stok = parseInt(p.Stok) + item.qty;
+                    if(p) {
+                        p.Stok = parseInt(p.Stok) + item.qty;
+                        if(p.Status === 'Habis') p.Status = 'Ready';
+                    }
                 });
+                
+                // C7 Fix: Restore batch deductions
+                if (trx.batchDeductions && Array.isArray(trx.batchDeductions)) {
+                    trx.batchDeductions.forEach(bd => {
+                        const p = this.state.products.find(x => compareBarcode(x.Barcode_ID, bd.barcode));
+                        if (p && p.batches && Array.isArray(p.batches)) {
+                            bd.deductions.forEach(d => {
+                                const batch = p.batches.find(b => b.batchId === d.batchId);
+                                if (batch) {
+                                    batch.stokSisa += d.qty;
+                                } else {
+                                    // Batch was removed (stokSisa was 0), re-add it
+                                    p.batches.push({ batchId: d.batchId, stokSisa: d.qty, expiredDate: '', hargaBeli: 0 });
+                                }
+                            });
+                        }
+                    });
+                }
                 
                 // Hapus dari histori dan antrean sync
                 this.state.transactions = this.state.transactions.filter(t => t.id !== trx.id);
@@ -1361,6 +1402,10 @@ const app = {
         const expired = convertDateToSheetFormat(expiredRaw);
         
         if(!name) return Swal.fire('Error', 'Nama Produk wajib diisi!', 'error');
+        // M1 Fix: Validate non-negative price and stock
+        if(price < 0) return Swal.fire('Error', 'Harga jual tidak boleh negatif!', 'error');
+        if(stock < 0) return Swal.fire('Error', 'Stok tidak boleh negatif!', 'error');
+        if(priceBuy < 0) return Swal.fire('Error', 'Harga beli tidak boleh negatif!', 'error');
 
         const product = { 
             Barcode_ID: newBarcode, 
@@ -1428,9 +1473,8 @@ const app = {
         }).then(res => {
             if(res.isConfirmed) {
                 this.state.products.splice(index, 1);
-                if (p.Barcode_ID) {
-                    this.state.syncQueue.push({ type: 'delete_product', data: { Barcode_ID: p.Barcode_ID, Nama_Camilan: p.Nama_Camilan, _sheetRow: p._sheetRow } });
-                }
+                // H4 Fix: Always sync deletion, use name as fallback identifier
+                this.state.syncQueue.push({ type: 'delete_product', data: { Barcode_ID: p.Barcode_ID || '', Nama_Camilan: p.Nama_Camilan, _sheetRow: p._sheetRow } });
                 this.saveData();
                 this.updateProductDatalist();
                 this.renderProductList();
@@ -1849,11 +1893,14 @@ const app = {
     },
 
     shareReceipt: function() {
+        if (!navigator.onLine) {
+            return Swal.fire('Offline', 'Maaf, Anda harus online untuk membagikan struk via WhatsApp.', 'warning');
+        }
         const trx = this.state.lastTransaction;
         if (!trx) return;
         
-        const settings = this.state.settings || { shopName: 'Arummanis', shopLogo: '🍬', cashierName: 'Admin' };
-        let text = `${settings.shopLogo || '🍬'} *${(settings.shopName || 'ARUMMANIS').toUpperCase()}*\n`;
+        const settings = this.state.settings || { shopName: 'Kasir Manis', shopLogo: '🏪', cashierName: 'Admin' };
+        let text = `${settings.shopLogo || '🏪'} *${(settings.shopName || 'KASIR MANIS').toUpperCase()}*\n`;
         if (settings.shopAddress) text += `📍 ${settings.shopAddress}\n`;
         text += `━━━━━━━━━━━━━━━━━━━━\n`;
         text += `No   : ${trx.id}\n`;
@@ -1872,6 +1919,9 @@ const app = {
             text += `Bayar    : Tunai\n`;
             text += `Tunai    : ${formatRupiah(trx.cash)}\n`;
             text += `Kembali  : ${formatRupiah(trx.change)}\n`;
+        } else if (trx.method === 'Transfer' || trx.method === 'QRIS') {
+            text += `Bayar    : ${trx.method}\n`;
+            text += `Status   : LUNAS\n`;
         } else if (trx.method === 'Kasbon') {
             const initDP = trx.initialDeposit || 0;
             const totalPaid = trx.cash || 0;

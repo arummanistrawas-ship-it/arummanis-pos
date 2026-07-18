@@ -1,4 +1,4 @@
-const CACHE_NAME = 'arummanis-pos-v38';
+const CACHE_NAME = 'arummanis-pos-v39';
 const ASSETS_TO_CACHE = [
     './',
     './index.html',
@@ -6,7 +6,7 @@ const ASSETS_TO_CACHE = [
     './app.js',
     './manifest.json',
     'https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js',
-    'https://cdn.jsdelivr.net/npm/sweetalert2@11',
+    'https://cdn.jsdelivr.net/npm/sweetalert2@11.10.8/dist/sweetalert2.all.min.js',
     'https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap',
     'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css'
 ];

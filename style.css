@@ -246,6 +246,7 @@ body { background: linear-gradient(135deg, #fdfbfb 0%, #ebedee 100%); color: var
         grid-template-columns: 1fr 1fr; /* Two equal-width columns */
         grid-template-rows: auto 1fr;
         height: 100vh;
+        max-width: 100% !important; /* C6 Fix: Override portrait max-width of 600px */
         gap: 12px;
         padding: 12px;
         box-sizing: border-box;
