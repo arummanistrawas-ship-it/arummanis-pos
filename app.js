@@ -417,8 +417,13 @@ const app = {
         }
     },
 
-    addToCart: function(product) {
-        const existing = this.state.cart.find(x => compareBarcode(x.Barcode_ID, product.Barcode_ID));
+     addToCart: function(product) {
+        const existing = this.state.cart.find(x => {
+            if (product.Barcode_ID && product.Barcode_ID.toString().trim() !== "") {
+                return x.Barcode_ID && x.Barcode_ID.toString().trim() === product.Barcode_ID.toString().trim();
+            }
+            return x.Nama_Camilan === product.Nama_Camilan;
+        });
         if(existing) {
             existing.qty += 1;
         } else {
@@ -428,14 +433,17 @@ const app = {
         Swal.fire({ toast:true, position:'top-end', icon:'success', title:`${product.Nama_Camilan} ditambahkan`, showConfirmButton:false, timer:1500 });
     },
 
-    updateCartItem: function(barcode, field, value) {
-        const item = this.state.cart.find(x => compareBarcode(x.Barcode_ID, barcode));
+    updateCartItem: function(identifier, field, value) {
+        const item = this.state.cart.find(x => 
+            (x.Barcode_ID && x.Barcode_ID.toString().trim() === identifier.toString().trim()) || 
+            (x.Nama_Camilan === identifier.toString())
+        );
         if(item) {
             if(field === 'qty') {
                 // C5 Fix: Allow qty=0 to trigger item removal (was: parseInt(0)||1 = 1)
                 const q = parseInt(value);
                 if (isNaN(q) || q <= 0) {
-                    this.removeCartItem(barcode);
+                    this.removeCartItem(identifier);
                     return;
                 } else {
                     item.qty = q;
@@ -446,8 +454,11 @@ const app = {
         }
     },
 
-    updateCartItemVal: function(barcode, field, el) {
-        const item = this.state.cart.find(x => compareBarcode(x.Barcode_ID, barcode));
+    updateCartItemVal: function(identifier, field, el) {
+        const item = this.state.cart.find(x => 
+            (x.Barcode_ID && x.Barcode_ID.toString().trim() === identifier.toString().trim()) || 
+            (x.Nama_Camilan === identifier.toString())
+        );
         if (item) {
             const val = parseInt(el.value) || 0;
             if (field === 'price') {
@@ -488,20 +499,26 @@ const app = {
         }
     },
 
-    cleanCartItemInput: function(barcode, field, el) {
-        const item = this.state.cart.find(x => compareBarcode(x.Barcode_ID, barcode));
+    cleanCartItemInput: function(identifier, field, el) {
+        const item = this.state.cart.find(x => 
+            (x.Barcode_ID && x.Barcode_ID.toString().trim() === identifier.toString().trim()) || 
+            (x.Nama_Camilan === identifier.toString())
+        );
         if (item) {
             if (field === 'qty') {
                 const val = parseInt(el.value) || 0;
                 if (val <= 0) {
-                    this.removeCartItem(barcode);
+                    this.removeCartItem(identifier);
                 }
             }
         }
     },
 
-    removeCartItem: function(barcode) {
-        this.state.cart = this.state.cart.filter(x => !compareBarcode(x.Barcode_ID, barcode));
+    removeCartItem: function(identifier) {
+        this.state.cart = this.state.cart.filter(x => 
+            !((x.Barcode_ID && x.Barcode_ID.toString().trim() === identifier.toString().trim()) || 
+              (x.Nama_Camilan === identifier.toString()))
+        );
         this.updateCartUI();
     },
 
@@ -524,6 +541,7 @@ const app = {
                 
                 const div = document.createElement('div');
                 div.className = 'cart-item';
+                const idKey = (item.Barcode_ID && item.Barcode_ID.toString().trim() !== "") ? item.Barcode_ID.toString().trim() : item.Nama_Camilan;
                 div.innerHTML = `
                     <div class="item-header">
                         <span>${item.Nama_Camilan}</span>
@@ -531,13 +549,13 @@ const app = {
                     </div>
                     <div class="item-editor">
                         <label>Rp</label>
-                        <input type="number" value="${item.editPrice}" oninput="app.updateCartItemVal('${item.Barcode_ID}', 'price', this)" onblur="app.cleanCartItemInput('${item.Barcode_ID}', 'price', this)">
+                        <input type="number" value="${item.editPrice}" oninput="app.updateCartItemVal('${idKey}', 'price', this)" onblur="app.cleanCartItemInput('${idKey}', 'price', this)">
                         <label>x</label>
                         <div class="qty-controls">
-                            <button class="qty-btn" onclick="app.updateCartItem('${item.Barcode_ID}', 'qty', ${item.qty - 1})">-</button>
-                            <input type="number" class="qty-input" value="${item.qty}" oninput="app.updateCartItemVal('${item.Barcode_ID}', 'qty', this)" onblur="app.cleanCartItemInput('${item.Barcode_ID}', 'qty', this)">
-                            <button class="qty-btn" onclick="app.updateCartItem('${item.Barcode_ID}', 'qty', ${item.qty + 1})">+</button>
-                            <button class="qty-btn del" onclick="app.removeCartItem('${item.Barcode_ID}')"><i class="fas fa-trash"></i></button>
+                            <button class="qty-btn" onclick="app.updateCartItem('${idKey}', 'qty', ${item.qty - 1})">-</button>
+                            <input type="number" class="qty-input" value="${item.qty}" oninput="app.updateCartItemVal('${idKey}', 'qty', this)" onblur="app.cleanCartItemInput('${idKey}', 'qty', this)">
+                            <button class="qty-btn" onclick="app.updateCartItem('${idKey}', 'qty', ${item.qty + 1})">+</button>
+                            <button class="qty-btn del" onclick="app.removeCartItem('${idKey}')"><i class="fas fa-trash"></i></button>
                         </div>
                     </div>
                 `;
