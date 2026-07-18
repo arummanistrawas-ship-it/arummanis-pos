@@ -2044,15 +2044,13 @@ const app = {
                 headerParts.push(lineFeed);
             }
 
-            // 3. Shop Name (Centered, Bold, Double Width & Height)
-            const shopNameLines = wrapText(settings.shopName || "ARUMMANIS", 14);
+            // 3. Shop Name (Centered, Bold, Normal Size to prevent pipih/wrapping)
+            const shopNameLines = wrapText(settings.shopName || "ARUMMANIS", 28);
             shopNameLines.forEach(line => {
                 headerParts.push(new TextEncoder().encode("   ")); // Left margin
-                headerParts.push(sizeLarge);
                 headerParts.push(boldOn);
-                headerParts.push(new TextEncoder().encode(centerDouble(line)));
+                headerParts.push(new TextEncoder().encode(centerNormal(line)));
                 headerParts.push(boldOff);
-                headerParts.push(sizeNormal);
                 headerParts.push(lineFeed);
             });
 
