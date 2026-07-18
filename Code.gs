@@ -57,7 +57,14 @@ function initSheets() {
   var tSheet = ss.getSheetByName("DatabaseTransaksi");
   if (!tSheet) {
     tSheet = ss.insertSheet("DatabaseTransaksi");
-    tSheet.appendRow(["ID", "Waktu", "Pelanggan", "Item (Detail)", "Subtotal", "Diskon", "Total", "Metode", "Tunai", "Kembalian", "Status"]);
+    tSheet.appendRow(["ID", "Waktu", "Pelanggan", "Item (Detail)", "Subtotal", "Diskon", "Total", "Metode", "Tunai", "Kembalian", "Status", "HPP", "Laba_Bersih"]);
+  } else {
+    // Pastikan kolom HPP dan Laba_Bersih ada jika sheet sudah ada sebelumnya
+    var lastCol = tSheet.getLastColumn();
+    if (lastCol < 13) {
+      tSheet.getRange(1, 12).setValue("HPP");
+      tSheet.getRange(1, 13).setValue("Laba_Bersih");
+    }
   }
 }
 
@@ -199,6 +206,16 @@ function processTransaction(transaction) {
   // Simpan detail transaksi ke database transaksi
   var detailItems = transaction.items.map(i => i.Nama_Camilan + " (" + i.qty + "x" + i.editPrice + ")").join(" | ");
   
+  // Hitung HPP (Total Modal)
+  var totalHPP = 0;
+  transaction.items.forEach(function(item) {
+    var modalItem = parseFloat(item.Harga_Modal || item.Harga_Beli || item.Harga || 0);
+    totalHPP += modalItem * (parseInt(item.qty) || 0);
+  });
+  
+  // Hitung Laba Bersih
+  var netProfit = parseFloat(transaction.total) - totalHPP;
+  
   tSheet.appendRow([
     transaction.id,
     transaction.timestamp,
@@ -210,7 +227,9 @@ function processTransaction(transaction) {
     transaction.method,
     transaction.cash,
     transaction.change,
-    transaction.status
+    transaction.status,
+    totalHPP,
+    netProfit
   ]);
   
   return successResponse('Transaksi berhasil diproses dengan sistem FIFO');
