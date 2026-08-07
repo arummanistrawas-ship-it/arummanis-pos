@@ -1158,22 +1158,16 @@ const app = {
         if(!this.state.lastTransaction) return;
         const trx = this.state.lastTransaction;
         
-        // H6 Fix: Cegah edit jika sudah tersinkronisasi ke server (tidak ada di antrean syncQueue)
-        const isPendingSync = this.state.syncQueue.some(q => q.type === 'transaction' && q.data.id === trx.id);
-        if (!isPendingSync && navigator.onLine) {
-            Swal.fire('Tidak Dapat Diedit', 'Transaksi ini sudah terekam ke dalam Google Sheets secara permanen. Fitur pembatalan otomatis hanya berlaku untuk transaksi baru yang belum terkirim. Jika ada kesalahan, silakan input ulang / catat retur secara manual.', 'error');
-            return;
-        }
-
         Swal.fire({
-            title: 'Edit Transaksi Ini?',
-            text: 'Ini akan membatalkan transaksi sebelumnya dan mengembalikan barang ke keranjang. Lanjutkan?',
-            icon: 'warning',
+            title: 'Edit Ulang Transaksi Ini?',
+            text: 'Ini akan membatalkan transaksi sebelumnya, mengembalikan stok, dan memuat kembali semua barang ke keranjang kasir untuk ditambahkan/diubah. Lanjutkan?',
+            icon: 'question',
             showCancelButton: true,
-            confirmButtonText: 'Ya, Edit'
+            confirmButtonText: 'Ya, Edit Ulang',
+            cancelButtonText: 'Batal'
         }).then((res) => {
             if(res.isConfirmed) {
-                // Kembalikan stok
+                // 1. Kembalikan stok produk lokal
                 trx.items.forEach(item => {
                     const p = this.state.products.find(x => compareBarcode(x.Barcode_ID, item.Barcode_ID));
                     if(p) {
@@ -1182,7 +1176,7 @@ const app = {
                     }
                 });
                 
-                // C7 Fix: Restore batch deductions
+                // 2. Restore batch deductions
                 if (trx.batchDeductions && Array.isArray(trx.batchDeductions)) {
                     trx.batchDeductions.forEach(bd => {
                         const p = this.state.products.find(x => compareBarcode(x.Barcode_ID, bd.barcode));
@@ -1192,7 +1186,6 @@ const app = {
                                 if (batch) {
                                     batch.stokSisa += d.qty;
                                 } else {
-                                    // Batch was removed (stokSisa was 0), re-add it
                                     p.batches.push({ batchId: d.batchId, stokSisa: d.qty, expiredDate: '', hargaBeli: 0 });
                                 }
                             });
@@ -1200,14 +1193,36 @@ const app = {
                     });
                 }
                 
-                // Hapus dari histori dan antrean sync
+                // 3. Hapus dari riwayat lokal
                 this.state.transactions = this.state.transactions.filter(t => t.id !== trx.id);
-                this.state.syncQueue = this.state.syncQueue.filter(q => !(q.type==='transaction' && q.data.id === trx.id));
                 
-                // Masukkan ke keranjang lagi
+                // 4. Penanganan Sinkronisasi Server (Google Sheets)
+                const pendingIdx = this.state.syncQueue.findIndex(q => q.type === 'transaction' && q.data.id === trx.id);
+                if (pendingIdx > -1) {
+                    // Jika masih ada di antrean sync (belum terkirim), hapus dari syncQueue
+                    this.state.syncQueue.splice(pendingIdx, 1);
+                } else {
+                    // Jika sudah telanjur tersimpan di Google Sheets, kirim perintah hapus transaksi ke server
+                    this.state.syncQueue.push({
+                        type: 'delete_transaction',
+                        data: { id: trx.id }
+                    });
+                }
+                
+                // 5. Pindahkan item kembali ke keranjang kasir
                 this.state.cart = [...trx.items];
                 this.saveData();
+                this.syncData();
                 this.navigate('pos');
+
+                Swal.fire({
+                    toast: true,
+                    position: 'top-end',
+                    icon: 'success',
+                    title: 'Transaksi dimuat ulang ke keranjang',
+                    showConfirmButton: false,
+                    timer: 2000
+                });
             }
         });
     },

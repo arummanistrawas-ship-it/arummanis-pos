@@ -190,14 +190,14 @@
                     </div>
                     
                     <div class="action-buttons-checkout mt-1">
-                        <button type="button" onclick="app.cancelCheckout()" class="btn btn-secondary">
-                            <i class="fas fa-arrow-left"></i> Batal / Kembali
+                        <button type="button" id="btnCheckoutLunas" onclick="app.processCheckoutLunas()" class="btn btn-success btn-lg">
+                            <i class="fas fa-print"></i> Lanjut Cetak Resi
                         </button>
                         <button type="button" id="btnCheckoutKasbon" onclick="app.processCheckoutKasbon()" class="btn btn-warning">
                             <i class="fas fa-handshake"></i> Simpan Transaksi Kasbon
                         </button>
-                        <button type="button" id="btnCheckoutLunas" onclick="app.processCheckoutLunas()" class="btn btn-success">
-                            <i class="fas fa-print"></i> Lanjut Cetak Resi
+                        <button type="button" onclick="app.cancelCheckout()" class="btn btn-secondary">
+                            <i class="fas fa-arrow-left"></i> Batal / Kembali
                         </button>
                     </div>
                 </div>

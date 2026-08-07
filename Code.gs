@@ -34,6 +34,8 @@ function doPost(e) {
             return saveSettings(payload.data);
         } else if (payload.type === 'update_batch') {
             return updateBatch(payload.data);
+        } else if (payload.type === 'delete_transaction') {
+            return deleteTransaction(payload.data);
         }
     }
     
@@ -556,4 +558,25 @@ function updateBatch(data) {
   }
   
   return successResponse('Berhasil mengupdate ' + updatedCount + ' batch');
+}
+
+function deleteTransaction(data) {
+  initSheets();
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var tSheet = ss.getSheetByName("DatabaseTransaksi");
+  if (!tSheet) return errorResponse('Sheet "DatabaseTransaksi" tidak ditemukan');
+  
+  var tData = tSheet.getDataRange().getValues();
+  if (tData.length < 2) return successResponse('Sheet transaksi kosong');
+  
+  var idCol = tData[0].indexOf("ID");
+  if (idCol === -1) idCol = 0;
+  
+  for (var i = 1; i < tData.length; i++) {
+    if (tData[i][idCol].toString().trim() === data.id.toString().trim()) {
+      tSheet.deleteRow(i + 1);
+      return successResponse('Transaksi ' + data.id + ' berhasil dihapus dari Google Sheets');
+    }
+  }
+  return successResponse('Transaksi ' + data.id + ' tidak ditemukan di Google Sheets');
 }
