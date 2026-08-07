@@ -414,6 +414,25 @@ const app = {
             restockSuggestions.classList.remove('hidden');
         });
 
+        restockInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                const term = restockInput.value.trim();
+                if (!term) return;
+                const p = this.state.products.find(x => 
+                    (x.Barcode_ID && compareBarcode(x.Barcode_ID, term)) || 
+                    (x.Nama_Camilan && String(x.Nama_Camilan).toLowerCase() === term.toLowerCase()) ||
+                    (x.Nama_Camilan && String(x.Nama_Camilan).toLowerCase().includes(term.toLowerCase()))
+                );
+                if (p) {
+                    this.selectRestockProduct(p);
+                    restockInput.value = '';
+                    restockSuggestions.classList.add('hidden');
+                } else {
+                    Swal.fire('Gagal', 'Produk tidak ditemukan!', 'warning');
+                }
+            }
+        });
+
         document.addEventListener('click', (e) => {
             if (!restockInput.contains(e.target) && !restockSuggestions.contains(e.target)) {
                 restockSuggestions.classList.add('hidden');
@@ -1316,6 +1335,7 @@ const app = {
         document.getElementById('restockPriceBuy').value = '';
         document.getElementById('restockExpired').value = '';
         document.getElementById('restockSelectedBarcode').value = '';
+        document.getElementById('restockSelectedProductName').value = '';
         document.getElementById('restockSelectedName').textContent = '—';
         document.getElementById('restockSelectedCurrentStock').textContent = '—';
         document.getElementById('restockSelectedDetails').classList.add('hidden');
@@ -1329,8 +1349,9 @@ const app = {
 
     selectRestockProduct: function(product) {
         document.getElementById('restockSelectedBarcode').value = product.Barcode_ID || '';
-        document.getElementById('restockSelectedName').textContent = product.Nama_Camilan;
-        document.getElementById('restockSelectedCurrentStock').textContent = `${product.Stok} pcs`;
+        document.getElementById('restockSelectedProductName').value = product.Nama_Camilan || '';
+        document.getElementById('restockSelectedName').textContent = product.Nama_Camilan || '—';
+        document.getElementById('restockSelectedCurrentStock').textContent = `${product.Stok || 0} pcs`;
         
         // Prefill modal / harga beli untuk menghemat waktu input
         document.getElementById('restockPriceBuy').value = product.Harga_Beli || product.Harga_Modal || '';
@@ -1338,18 +1359,25 @@ const app = {
     },
 
     saveRestock: function() {
-        const barcode = document.getElementById('restockSelectedBarcode').value;
+        const barcode = document.getElementById('restockSelectedBarcode').value.trim();
+        const productName = document.getElementById('restockSelectedProductName').value.trim();
         const qty = parseInt(document.getElementById('restockQty').value) || 0;
         const priceBuy = parseInt(document.getElementById('restockPriceBuy').value) || 0;
         const expiredRaw = document.getElementById('restockExpired').value;
         const expired = convertDateToSheetFormat(expiredRaw);
 
-        if (!barcode) return Swal.fire('Error', 'Silakan pilih produk terlebih dahulu!', 'warning');
+        if (!barcode && !productName) return Swal.fire('Error', 'Silakan pilih produk terlebih dahulu!', 'warning');
         if (qty <= 0) return Swal.fire('Error', 'Jumlah stok masuk harus lebih dari 0!', 'warning');
         if (priceBuy <= 0) return Swal.fire('Error', 'Harga beli modal harus lebih dari 0!', 'warning');
 
         // Cari produk lokal untuk diupdate
-        const p = this.state.products.find(x => compareBarcode(x.Barcode_ID, barcode));
+        const p = this.state.products.find(x => {
+            if (barcode) {
+                return x.Barcode_ID && compareBarcode(x.Barcode_ID, barcode);
+            }
+            return x.Nama_Camilan === productName;
+        });
+
         if (p) {
             p.Stok = (parseInt(p.Stok) || 0) + qty;
             p.Status = 'Ready';
@@ -1370,6 +1398,7 @@ const app = {
         const restockData = {
             id: 'RESTOCK-' + Date.now(),
             Barcode_ID: barcode,
+            Nama_Camilan: p ? p.Nama_Camilan : productName,
             qty: qty,
             priceBuy: priceBuy,
             expired: expired

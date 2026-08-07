@@ -484,7 +484,7 @@ function processRestock(data) {
   
   bSheet.appendRow([
     batchId,
-    data.Barcode_ID,
+    data.Barcode_ID || data.Nama_Camilan || '',
     tanggalMasuk,
     tanggalExpired,
     data.qty,
