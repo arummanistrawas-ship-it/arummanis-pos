@@ -113,6 +113,11 @@ body { background: linear-gradient(135deg, #fdfbfb 0%, #ebedee 100%); color: var
 .action-buttons { display: flex; gap: 10px; }
 .action-buttons button { flex: 1; }
 .action-buttons-col { display: flex; flex-direction: column; gap: 10px; }
+.action-buttons-checkout { display: flex; flex-direction: column; gap: 10px; margin-top: 1.5rem; }
+.action-buttons-checkout button { flex: 1; justify-content: center; font-weight: 600; }
+@media (min-width: 600px) {
+    .action-buttons-checkout { flex-direction: row; }
+}
 
 /* Change / Checkout */
 .change-section { display: flex; justify-content: space-between; align-items: center; background: #f0fdf4; padding: 1rem; border-radius: 10px; border: 1px solid #bbf7d0; }
