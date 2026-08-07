@@ -97,6 +97,7 @@ const app = {
         bluetoothChar: null,
         checkoutMode: 'new',
         repaymentTransactionId: null,
+        savedTransactions: [],
         settings: {
             shopName: 'Kasir Manis',
             shopAddress: 'Store Camilan dan Oleh-oleh',
@@ -114,6 +115,7 @@ const app = {
         await this.loadData();
         this.bindEvents();
         this.preloadBluetoothDevice(); // Preload paired bluetooth devices di background
+        this.updateSavedBadge();
         
         // Baca view dari hash URL untuk mendukung refresh halaman langsung ke menu aktif
         const initialView = window.location.hash ? window.location.hash.substring(1) : 'dashboard';
@@ -194,6 +196,7 @@ const app = {
             if(viewId === 'debt') { titleEl.textContent = 'Belum Lunas (Kasbon)'; this.renderTransactionList('Kasbon', 'debtListContainer', 'searchDebt'); }
             if(viewId === 'products') { titleEl.textContent = 'Manajemen Produk'; this.renderProductList(); }
             if(viewId === 'settings') { titleEl.textContent = 'Pengaturan'; this.showSettingsForm(); }
+            if(viewId === 'saved') { titleEl.textContent = 'Transaksi Tersimpan'; this.renderSavedTransactions(); }
         }
     },
 
@@ -216,6 +219,11 @@ const app = {
             }
         } catch (e) { console.error('Corrupt pos_settings, using defaults:', e); }
         
+        // Load saved/held transactions
+        try {
+            this.state.savedTransactions = JSON.parse(localStorage.getItem('pos_saved_transactions') || '[]');
+        } catch (e) { this.state.savedTransactions = []; }
+        
         this.checkOfflineQueue();
         
         if (navigator.onLine && GAS_URL !== 'YOUR_GOOGLE_APPS_SCRIPT_WEB_APP_URL') {
@@ -229,6 +237,19 @@ const app = {
             } catch (error) {
                 console.error('Gagal memuat produk dari Sheets:', error);
             }
+            
+            // Sync settings dari server jika lokal kosong
+            if (!localStorage.getItem('pos_settings')) {
+                try {
+                    const settingsResp = await fetch(`${GAS_URL}?action=get_settings`);
+                    const settingsData = await settingsResp.json();
+                    if (settingsData.status === 'success' && settingsData.data && Object.keys(settingsData.data).length > 0) {
+                        Object.assign(this.state.settings, settingsData.data);
+                        localStorage.setItem('pos_settings', JSON.stringify(this.state.settings));
+                    }
+                } catch (e) { console.error('Gagal memuat settings dari server:', e); }
+            }
+            
             // Sinkronisasi antrean offline yang tertunda setelah konek kembali
             this.syncData();
         }
@@ -239,6 +260,7 @@ const app = {
         localStorage.setItem('pos_transactions', JSON.stringify(this.state.transactions));
         localStorage.setItem('pos_queue', JSON.stringify(this.state.syncQueue));
         localStorage.setItem('pos_settings', JSON.stringify(this.state.settings));
+        localStorage.setItem('pos_saved_transactions', JSON.stringify(this.state.savedTransactions));
     },
 
     // --- POS & Cart Logic ---
@@ -1251,13 +1273,15 @@ const app = {
                 const sortedBatches = [...p.batches].sort((a, b) => new Date(convertDateToPickerFormat(a.expiredDate)) - new Date(convertDateToPickerFormat(b.expiredDate)));
                 sortedBatches.forEach((b, idx) => {
                     batchesHtml += `
-                        <div style="background: #f8fafc; border: 1px solid #e2e8f0; padding: 10px; border-radius: 6px; display: flex; justify-content: space-between; align-items: center; font-size: 0.9rem;">
-                            <div>
-                                <strong style="color: var(--primary);">Stok ${idx + 1}:</strong> ${b.stokSisa} pcs
-                                <div style="font-size: 0.8rem; color: #64748b; margin-top: 2px;">Exp: ${b.expiredDate || '—'}</div>
+                        <div style="background: #f8fafc; border: 1px solid #e2e8f0; padding: 10px; border-radius: 6px; font-size: 0.9rem;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                                <strong style="color: var(--primary);">Batch ${idx + 1}</strong>
+                                <span style="font-size: 0.8rem; color: #64748b;">Modal: ${formatRupiah(b.hargaBeli)}</span>
                             </div>
-                            <div style="font-size: 0.85rem; font-weight: 600; color: #475569;">
-                                Modal: ${formatRupiah(b.hargaBeli)}
+                            <div style="display: flex; gap: 8px; align-items: center;">
+                                <label style="font-size: 0.85rem; white-space: nowrap;">Stok:</label>
+                                <input type="number" class="input-sm batch-stok-input" data-batch-id="${b.batchId}" value="${b.stokSisa}" min="0" style="width: 70px; text-align: center;" onchange="app.recalcBatchTotal()">
+                                <span style="font-size: 0.8rem; color: #64748b;">pcs | Exp: ${b.expiredDate || '—'}</span>
                             </div>
                         </div>
                     `;
@@ -1444,13 +1468,23 @@ const app = {
         this.stopProductScanner();
         document.getElementById('productFormOverlay').classList.add('hidden');
     },
+    recalcBatchTotal: function() {
+        const inputs = document.querySelectorAll('.batch-stok-input');
+        let total = 0;
+        inputs.forEach(inp => {
+            total += Math.max(0, parseInt(inp.value) || 0);
+        });
+        const stockInput = document.getElementById('prodFormStock');
+        if (stockInput) stockInput.value = total;
+    },
+
     saveProduct: function() {
         const editIndex = document.getElementById('prodFormId').value;
         const isEdit = editIndex !== '' && editIndex !== null && editIndex !== undefined;
         const newBarcode = document.getElementById('prodFormBarcode').value.trim();
         const name = document.getElementById('prodFormName').value.trim();
         const price = parseInt(document.getElementById('prodFormPrice').value) || 0;
-        const stock = parseInt(document.getElementById('prodFormStock').value) || 0;
+        let stock = parseInt(document.getElementById('prodFormStock').value) || 0;
         
         const priceBuy = parseInt(document.getElementById('prodFormPriceBuy').value) || 0;
         const expiredRaw = document.getElementById('prodFormExpired').value;
@@ -1492,11 +1526,28 @@ const app = {
                 }
             }
             
-            // Pertahankan _sheetRow, batches, dan Stok lama
+            // Update stok batch jika ada input editable batch
+            const batchInputs = document.querySelectorAll('.batch-stok-input');
+            let updatedBatches = oldProduct.batches ? [...oldProduct.batches] : [];
+            if (batchInputs.length > 0) {
+                let calcStock = 0;
+                batchInputs.forEach(inp => {
+                    const bId = inp.dataset.batchId;
+                    const val = Math.max(0, parseInt(inp.value) || 0);
+                    const bObj = updatedBatches.find(b => b.batchId === bId);
+                    if (bObj) {
+                        bObj.stokSisa = val;
+                    }
+                    calcStock += val;
+                });
+                stock = calcStock;
+            }
+            
+            // Pertahankan _sheetRow
             product._sheetRow = oldProduct._sheetRow;
-            product.batches = oldProduct.batches || [];
-            product.Stok = oldProduct.Stok || 0;
-            product.Status = product.Stok > 0 ? 'Ready' : 'Habis';
+            product.batches = updatedBatches;
+            product.Stok = stock;
+            product.Status = stock > 0 ? 'Ready' : 'Habis';
             
             this.state.products[idx] = product;
             
@@ -1504,6 +1555,14 @@ const app = {
                 type: 'product', 
                 data: { ...product, oldBarcode: oldProduct.Barcode_ID || '' } 
             });
+
+            // Antrekan sync pembaruan batch ke StokBatch jika ada batch
+            if (updatedBatches.length > 0) {
+                this.state.syncQueue.push({
+                    type: 'update_batch',
+                    data: { Barcode_ID: product.Barcode_ID, batches: updatedBatches }
+                });
+            }
         } else {
             // Produk baru — cek duplikat barcode jika diisi
             if (newBarcode && this.state.products.find(x => x.Barcode_ID && compareBarcode(x.Barcode_ID, newBarcode))) {
@@ -1750,6 +1809,14 @@ const app = {
         this.state.settings.receiptFooter = footer;
 
         localStorage.setItem('pos_settings', JSON.stringify(this.state.settings));
+        
+        // Sync settings ke server agar tersedia di device lain
+        this.state.syncQueue.push({
+            type: 'save_settings',
+            data: { ...this.state.settings }
+        });
+        this.saveData();
+        this.syncData();
         
         if (gasUrl) {
             localStorage.setItem('pos_gas_url', gasUrl);
@@ -2285,6 +2352,196 @@ const app = {
         } catch (e) {
             if (e.name !== 'NotFoundError') Swal.fire('Gagal', e.message, 'error');
         }
+    },
+
+    // --- Hold / Saved Transactions ---
+    updateSavedBadge: function() {
+        const badge = document.getElementById('savedBadge');
+        if (badge) {
+            const count = this.state.savedTransactions.length;
+            badge.textContent = count;
+            if (count > 0) {
+                badge.classList.remove('hidden');
+            } else {
+                badge.classList.add('hidden');
+            }
+        }
+    },
+
+    holdTransaction: function() {
+        if (this.state.cart.length === 0) {
+            return Swal.fire('Keranjang Kosong', 'Tidak ada barang di keranjang untuk disimpan!', 'warning');
+        }
+
+        Swal.fire({
+            title: 'Simpan Transaksi',
+            text: 'Masukkan nama pelanggan / catatan transaksi ini:',
+            input: 'text',
+            inputPlaceholder: 'Cth: Mas Budi / Meja 3',
+            showCancelButton: true,
+            confirmButtonText: 'Simpan',
+            cancelButtonText: 'Batal',
+            inputValidator: (value) => {
+                if (!value || !value.trim()) {
+                    return 'Nama pelanggan wajib diisi!';
+                }
+            }
+        }).then((res) => {
+            if (res.isConfirmed && res.value) {
+                const customerName = res.value.trim();
+                const now = new Date();
+                const timeStr = now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+                
+                const savedItem = {
+                    id: 'HOLD-' + Date.now(),
+                    customer: customerName,
+                    time: timeStr,
+                    date: now.toLocaleDateString('id-ID'),
+                    items: [...this.state.cart],
+                    subtotal: this.state.tempSubtotal,
+                    discount: this.state.tempDiscount,
+                    total: this.state.tempTotal,
+                    discountType: document.getElementById('discountType')?.value || 'nominal',
+                    discountValue: document.getElementById('discountValue')?.value || 0
+                };
+
+                this.state.savedTransactions.push(savedItem);
+                this.state.cart = [];
+                this.saveData();
+                this.updateCartUI();
+                this.updateSavedBadge();
+
+                Swal.fire({
+                    toast: true,
+                    position: 'top-end',
+                    icon: 'success',
+                    title: `Transaksi ${customerName} berhasil disimpan`,
+                    showConfirmButton: false,
+                    timer: 2000
+                });
+            }
+        });
+    },
+
+    renderSavedTransactions: function() {
+        const container = document.getElementById('savedListContainer');
+        if (!container) return;
+
+        this.updateSavedBadge();
+        container.innerHTML = '';
+
+        if (this.state.savedTransactions.length === 0) {
+            container.innerHTML = `
+                <div class="empty-state text-center" style="padding: 40px 20px; color: #94a3b8;">
+                    <i class="fas fa-inbox" style="font-size: 3rem; margin-bottom: 12px;"></i>
+                    <p style="font-size: 1.1rem; font-weight: 600; margin-bottom: 4px;">Tidak Ada Transaksi Tersimpan</p>
+                    <p style="font-size: 0.9rem;">Transaksi yang Anda simpan sementara dari menu kasir akan muncul di sini.</p>
+                </div>
+            `;
+            return;
+        }
+
+        this.state.savedTransactions.forEach((trx, idx) => {
+            const card = document.createElement('div');
+            card.className = 'card mb-1';
+            card.style.position = 'relative';
+            
+            const itemCount = trx.items.reduce((sum, i) => sum + i.qty, 0);
+            const itemSummary = trx.items.map(i => `${i.Nama_Camilan} (${i.qty}x)`).join(', ');
+
+            card.innerHTML = `
+                <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
+                    <div>
+                        <h3 style="margin: 0; color: var(--primary); font-size: 1.1rem;"><i class="fas fa-user-clock"></i> ${trx.customer}</h3>
+                        <span style="font-size: 0.8rem; color: #64748b;"><i class="far fa-clock"></i> ${trx.time} (${trx.date || 'Hari ini'})</span>
+                    </div>
+                    <div style="text-align: right;">
+                        <span style="font-size: 1.1rem; font-weight: 700; color: #1e293b;">${formatRupiah(trx.total)}</span>
+                        <div style="font-size: 0.8rem; color: #64748b;">${itemCount} item</div>
+                    </div>
+                </div>
+                <div style="font-size: 0.85rem; color: #475569; background: #f8fafc; padding: 8px 12px; border-radius: 6px; margin-bottom: 12px; border: 1px solid #e2e8f0;">
+                    ${itemSummary}
+                </div>
+                <div style="display: flex; gap: 8px; justify-content: flex-end;">
+                    <button class="btn btn-sm btn-danger" onclick="app.deleteSavedTransaction(${idx})">
+                        <i class="fas fa-trash"></i> Hapus
+                    </button>
+                    <button class="btn btn-sm btn-success" onclick="app.resumeSavedTransaction(${idx})">
+                        <i class="fas fa-play"></i> Lanjutkan Transaksi
+                    </button>
+                </div>
+            `;
+            container.appendChild(card);
+        });
+    },
+
+    resumeSavedTransaction: function(idx) {
+        const item = this.state.savedTransactions[idx];
+        if (!item) return;
+
+        const doResume = () => {
+            this.state.cart = [...item.items];
+            this.state.savedTransactions.splice(idx, 1);
+            this.saveData();
+            this.updateSavedBadge();
+            
+            this.navigate('pos');
+            
+            if (item.discountType && document.getElementById('discountType')) {
+                document.getElementById('discountType').value = item.discountType;
+            }
+            if (item.discountValue && document.getElementById('discountValue')) {
+                document.getElementById('discountValue').value = item.discountValue;
+            }
+            this.updateCartUI();
+
+            Swal.fire({
+                toast: true,
+                position: 'top-end',
+                icon: 'success',
+                title: `Transaksi ${item.customer} dimuat ke keranjang`,
+                showConfirmButton: false,
+                timer: 2000
+            });
+        };
+
+        if (this.state.cart.length > 0) {
+            Swal.fire({
+                title: 'Ganti Keranjang?',
+                text: 'Keranjang kasir saat ini berisi barang. Apakah Anda ingin menggantinya dengan transaksi tersimpan ini?',
+                icon: 'warning',
+                showCancelButton: true,
+                confirmButtonText: 'Ya, Ganti',
+                cancelButtonText: 'Batal'
+            }).then(res => {
+                if (res.isConfirmed) doResume();
+            });
+        } else {
+            doResume();
+        }
+    },
+
+    deleteSavedTransaction: function(idx) {
+        const item = this.state.savedTransactions[idx];
+        if (!item) return;
+
+        Swal.fire({
+            title: 'Hapus Transaksi Tersimpan?',
+            text: `Hapus transaksi milik "${item.customer}"?`,
+            icon: 'warning',
+            showCancelButton: true,
+            confirmButtonColor: '#d33',
+            confirmButtonText: 'Ya, Hapus',
+            cancelButtonText: 'Batal'
+        }).then(res => {
+            if (res.isConfirmed) {
+                this.state.savedTransactions.splice(idx, 1);
+                this.saveData();
+                this.renderSavedTransactions();
+                Swal.fire('Terhapus', 'Transaksi tersimpan berhasil dihapus', 'success');
+            }
+        });
     },
 
     getLogoEscPosBytes: function(base64Str) {

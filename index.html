@@ -79,13 +79,18 @@
                         <i class="fas fa-box-open"></i>
                         <h3>Data Produk</h3>
                     </div>
+                    <div class="dash-card" onclick="app.navigate('saved')">
+                        <i class="fas fa-pause-circle"></i>
+                        <h3>Transaksi Tersimpan</h3>
+                        <span id="savedBadge" class="badge-count hidden">0</span>
+                    </div>
                     <div class="dash-card full-width" onclick="app.navigate('settings')">
                         <i class="fas fa-cog"></i>
                         <h3>Pengaturan</h3>
                     </div>
                 </div>
                 <div class="version-info" style="text-align: center; color: #888; font-size: 0.8rem; margin-top: 2.5rem; padding: 10px; border-top: 1px dashed #eee;">
-                    <i class="fas fa-code-branch"></i> Versi: 8.0 — Edit Produk Tanpa Barcode
+                    <i class="fas fa-code-branch"></i> Versi: 9.0 — Multi-Device Sync & Stock Opname
                     <br>
                     <a href="?clear=1" style="color: #FF6B6B; text-decoration: underline; display: inline-block; margin-top: 5px;"><i class="fas fa-sync-alt"></i> Reset Aplikasi & Bersihkan Cache</a>
                 </div>
@@ -138,9 +143,14 @@
                             <span>TOTAL:</span>
                             <span class="total-price" id="totalPrice">Rp 0</span>
                         </div>
-                        <button id="processCheckoutBtn" class="btn btn-success btn-block btn-lg" disabled>
-                            Bayar <i class="fas fa-arrow-right"></i>
-                        </button>
+                        <div style="display: flex; gap: 8px; margin-top: 10px;">
+                            <button id="holdCartBtn" class="btn btn-secondary btn-lg" onclick="app.holdTransaction()" style="flex: 1;">
+                                <i class="fas fa-pause-circle"></i> Simpan
+                            </button>
+                            <button id="processCheckoutBtn" class="btn btn-success btn-lg" style="flex: 2;" disabled>
+                                Bayar <i class="fas fa-arrow-right"></i>
+                            </button>
+                        </div>
                     </div>
                 </div>
             </section>
@@ -200,16 +210,25 @@
                 </div>
             </section>
 
-            <!-- 5a. HISTORY TRANSAKSI -->
+            <!-- 8. HISTORY TRANSAKSI -->
             <section id="view-history" class="view hidden">
-                <div class="card">
-                    <div class="form-group">
-                        <input type="text" id="searchTransaction" class="input-full" placeholder="Cari ID / Nama Pelanggan...">
-                    </div>
-                    <div class="transaction-list" id="transactionListContainer">
-                        <!-- Injected by JS -->
-                    </div>
+                <div class="section-header mb-1">
+                    <h2><i class="fas fa-history"></i> Histori Transaksi</h2>
                 </div>
+                
+                <div class="input-wrapper mb-1">
+                    <input type="text" id="searchTransaction" placeholder="Cari ID, Tanggal, atau Nama Pelanggan..." class="input-full">
+                </div>
+                
+                <div id="transactionListContainer"></div>
+            </section>
+
+            <!-- 9. TRANSAKSI TERSIMPAN -->
+            <section id="view-saved" class="view hidden">
+                <div class="section-header mb-1">
+                    <h2><i class="fas fa-pause-circle"></i> Transaksi Tersimpan (Antrean)</h2>
+                </div>
+                <div id="savedListContainer"></div>
             </section>
 
             <!-- 5b. KASBON (BELUM LUNAS) -->

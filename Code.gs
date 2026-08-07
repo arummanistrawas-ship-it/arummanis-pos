@@ -5,6 +5,10 @@ function doGet(e) {
     return getProducts();
   }
   
+  if (action === 'get_settings') {
+    return getSettings();
+  }
+  
   return ContentService.createTextOutput(JSON.stringify({status: 'error', message: 'Action not found'}))
     .setMimeType(ContentService.MimeType.JSON);
 }
@@ -26,6 +30,10 @@ function doPost(e) {
             return deleteProduct(payload.data);
         } else if (payload.type === 'restock') {
             return processRestock(payload.data);
+        } else if (payload.type === 'save_settings') {
+            return saveSettings(payload.data);
+        } else if (payload.type === 'update_batch') {
+            return updateBatch(payload.data);
         }
     }
     
@@ -66,6 +74,26 @@ function initSheets() {
       tSheet.getRange(1, 13).setValue("Laba_Bersih");
     }
   }
+  
+  var sSheet = ss.getSheetByName("Pengaturan");
+  if (!sSheet) {
+    sSheet = ss.insertSheet("Pengaturan");
+    sSheet.appendRow(["Key", "Value"]);
+  }
+}
+
+function getSettings() {
+  initSheets();
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName("Pengaturan");
+  if (!sheet) return successResponse({});
+  
+  var data = sheet.getDataRange().getValues();
+  var settings = {};
+  for (var i = 1; i < data.length; i++) {
+    if (data[i][0]) settings[data[i][0]] = data[i][1];
+  }
+  return successResponse(settings);
 }
 
 function getProducts() {
@@ -466,4 +494,66 @@ function processRestock(data) {
   ]);
   
   return successResponse('Restok berhasil disimpan ke StokBatch');
+}
+
+function saveSettings(data) {
+  initSheets();
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = ss.getSheetByName("Pengaturan");
+  if (!sheet) return errorResponse('Sheet "Pengaturan" tidak ditemukan');
+  
+  // Clear existing data (keep header)
+  var lastRow = sheet.getLastRow();
+  if (lastRow > 1) {
+    sheet.getRange(2, 1, lastRow - 1, 2).clearContent();
+  }
+  
+  // Write each setting as a key-value row
+  var keys = Object.keys(data);
+  for (var i = 0; i < keys.length; i++) {
+    var key = keys[i];
+    var value = data[key] || '';
+    // Skip shopLogo (base64 images are too large for sheets)
+    if (key === 'shopLogo') continue;
+    sheet.getRange(i + 2, 1).setValue(key);
+    sheet.getRange(i + 2, 2).setValue(value);
+  }
+  
+  return successResponse('Pengaturan berhasil disimpan');
+}
+
+function updateBatch(data) {
+  initSheets();
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var bSheet = ss.getSheetByName("StokBatch");
+  if (!bSheet) return errorResponse('Sheet "StokBatch" tidak ditemukan');
+  
+  var bData = bSheet.getDataRange().getValues();
+  var headers = bData[0];
+  var bIdCol = headers.indexOf("Batch_ID");
+  var bSisaCol = headers.indexOf("Stok_Sisa");
+  var bStatusCol = headers.indexOf("Status");
+  
+  if (bIdCol === -1 || bSisaCol === -1) return errorResponse('Kolom Batch_ID atau Stok_Sisa tidak ditemukan');
+  
+  var batches = data.batches || [];
+  var updatedCount = 0;
+  
+  for (var b = 0; b < batches.length; b++) {
+    var batchId = batches[b].batchId;
+    var newStok = parseInt(batches[b].stokSisa) || 0;
+    
+    for (var i = 1; i < bData.length; i++) {
+      if (bData[i][bIdCol] === batchId) {
+        bSheet.getRange(i + 1, bSisaCol + 1).setValue(newStok);
+        if (bStatusCol > -1) {
+          bSheet.getRange(i + 1, bStatusCol + 1).setValue(newStok > 0 ? 'Ready' : 'Habis');
+        }
+        updatedCount++;
+        break;
+      }
+    }
+  }
+  
+  return successResponse('Berhasil mengupdate ' + updatedCount + ' batch');
 }
