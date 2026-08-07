@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Kasir Manis POS</title>
     <script>
-        // Reset cache PWA jika ada parameter ?clear=1 di URL
+        // Refresh cache file PWA (JS/CSS) tanpa menghapus data produk & profil toko
         if (window.location.search.includes('clear=1')) {
             if ('serviceWorker' in navigator) {
                 navigator.serviceWorker.getRegistrations().then(registrations => {
@@ -21,9 +21,7 @@
                     }
                 });
             }
-            localStorage.clear();
-            sessionStorage.clear();
-            // Hapus parameter search dan reload ke origin
+            // Hapus parameter ?clear=1 dan muat ulang halaman (Data localStorage & Profil tetap AMAN)
             window.location.href = window.location.origin + window.location.pathname;
         }
     </script>
