@@ -197,6 +197,7 @@ const app = {
             if(viewId === 'products') { titleEl.textContent = 'Manajemen Produk'; this.renderProductList(); }
             if(viewId === 'settings') { titleEl.textContent = 'Pengaturan'; this.showSettingsForm(); }
             if(viewId === 'saved') { titleEl.textContent = 'Transaksi Tersimpan'; this.renderSavedTransactions(); }
+            if(viewId === 'reports') { titleEl.textContent = 'Laporan Keuangan'; this.initReports(); }
         }
     },
 
@@ -1225,6 +1226,636 @@ const app = {
                 });
             }
         });
+    },
+
+    // ===== LAPORAN KEUANGAN & PENJUALAN =====
+    _reportState: {
+        period: 'daily',
+        salesChart: null,
+        paymentChart: null,
+        currentRankTab: 'terlaris',
+        cachedTransactions: [],
+        cachedPrevTransactions: []
+    },
+
+    initReports: function() {
+        // Set default date to today
+        const today = new Date();
+        const dateInput = document.getElementById('reportDate');
+        if (dateInput) dateInput.value = today.toISOString().split('T')[0];
+
+        const fromInput = document.getElementById('reportDateFrom');
+        const toInput = document.getElementById('reportDateTo');
+        if (fromInput) fromInput.value = today.toISOString().split('T')[0];
+        if (toInput) toInput.value = today.toISOString().split('T')[0];
+
+        this._reportState.period = 'daily';
+        this._reportState.currentRankTab = 'terlaris';
+
+        // Activate default period button
+        document.querySelectorAll('.report-period-btn').forEach(btn => btn.classList.remove('active'));
+        const defaultBtn = document.querySelector('.report-period-btn[data-period="daily"]');
+        if (defaultBtn) defaultBtn.classList.add('active');
+
+        this.updateDatePickerVisibility();
+        this.renderReports();
+    },
+
+    changeReportPeriod: function(period) {
+        this._reportState.period = period;
+        document.querySelectorAll('.report-period-btn').forEach(btn => btn.classList.remove('active'));
+        const activeBtn = document.querySelector(`.report-period-btn[data-period="${period}"]`);
+        if (activeBtn) activeBtn.classList.add('active');
+        this.updateDatePickerVisibility();
+        this.renderReports();
+    },
+
+    updateDatePickerVisibility: function() {
+        const period = this._reportState.period;
+        const singlePicker = document.getElementById('reportDatePicker');
+        const customRange = document.getElementById('reportCustomRange');
+        const dateInput = document.getElementById('reportDate');
+
+        if (period === 'custom') {
+            singlePicker.classList.add('hidden');
+            customRange.classList.remove('hidden');
+        } else {
+            singlePicker.classList.remove('hidden');
+            customRange.classList.add('hidden');
+
+            if (period === 'daily') {
+                dateInput.type = 'date';
+                singlePicker.querySelector('label').textContent = 'Tanggal:';
+            } else if (period === 'weekly') {
+                dateInput.type = 'date';
+                singlePicker.querySelector('label').textContent = 'Pilih tanggal dalam minggu:';
+            } else if (period === 'monthly') {
+                dateInput.type = 'month';
+                singlePicker.querySelector('label').textContent = 'Bulan:';
+            } else if (period === 'yearly') {
+                dateInput.type = 'number';
+                dateInput.min = '2020';
+                dateInput.max = '2099';
+                dateInput.value = new Date().getFullYear();
+                singlePicker.querySelector('label').textContent = 'Tahun:';
+            }
+        }
+    },
+
+    getFilteredTransactions: function(period, refDate) {
+        const transactions = this.state.transactions || [];
+        if (!transactions.length) return [];
+
+        let startDate, endDate;
+
+        if (period === 'daily') {
+            startDate = new Date(refDate);
+            startDate.setHours(0, 0, 0, 0);
+            endDate = new Date(refDate);
+            endDate.setHours(23, 59, 59, 999);
+        } else if (period === 'weekly') {
+            const d = new Date(refDate);
+            const day = d.getDay();
+            const diffToMonday = day === 0 ? -6 : 1 - day;
+            startDate = new Date(d);
+            startDate.setDate(d.getDate() + diffToMonday);
+            startDate.setHours(0, 0, 0, 0);
+            endDate = new Date(startDate);
+            endDate.setDate(startDate.getDate() + 6);
+            endDate.setHours(23, 59, 59, 999);
+        } else if (period === 'monthly') {
+            startDate = new Date(refDate.getFullYear(), refDate.getMonth(), 1, 0, 0, 0, 0);
+            endDate = new Date(refDate.getFullYear(), refDate.getMonth() + 1, 0, 23, 59, 59, 999);
+        } else if (period === 'yearly') {
+            startDate = new Date(refDate.getFullYear(), 0, 1, 0, 0, 0, 0);
+            endDate = new Date(refDate.getFullYear(), 11, 31, 23, 59, 59, 999);
+        } else if (period === 'custom') {
+            startDate = new Date(refDate.from);
+            startDate.setHours(0, 0, 0, 0);
+            endDate = new Date(refDate.to);
+            endDate.setHours(23, 59, 59, 999);
+        }
+
+        return transactions.filter(trx => {
+            const trxDate = new Date(trx.timestamp);
+            return trxDate >= startDate && trxDate <= endDate;
+        });
+    },
+
+    getPreviousPeriodDate: function(period, refDate) {
+        if (period === 'daily') {
+            const prev = new Date(refDate);
+            prev.setDate(prev.getDate() - 1);
+            return prev;
+        } else if (period === 'weekly') {
+            const prev = new Date(refDate);
+            prev.setDate(prev.getDate() - 7);
+            return prev;
+        } else if (period === 'monthly') {
+            return new Date(refDate.getFullYear(), refDate.getMonth() - 1, 1);
+        } else if (period === 'yearly') {
+            return new Date(refDate.getFullYear() - 1, 0, 1);
+        }
+        return null;
+    },
+
+    getRefDateFromInputs: function() {
+        const period = this._reportState.period;
+        const dateInput = document.getElementById('reportDate');
+
+        if (period === 'custom') {
+            return {
+                from: document.getElementById('reportDateFrom').value,
+                to: document.getElementById('reportDateTo').value
+            };
+        } else if (period === 'yearly') {
+            return new Date(parseInt(dateInput.value), 0, 1);
+        } else if (period === 'monthly') {
+            const parts = dateInput.value.split('-');
+            return new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, 1);
+        } else {
+            return new Date(dateInput.value);
+        }
+    },
+
+    calculateMetrics: function(transactions) {
+        let omset = 0, laba = 0, totalItems = 0, totalDiskon = 0;
+        const trxCount = transactions.length;
+
+        transactions.forEach(trx => {
+            omset += (parseFloat(trx.total) || 0);
+            totalDiskon += (parseFloat(trx.discount) || 0);
+
+            if (trx.items && Array.isArray(trx.items)) {
+                trx.items.forEach(item => {
+                    const qty = parseInt(item.qty) || 0;
+                    const sellPrice = parseFloat(item.editPrice) || parseFloat(item.Harga) || 0;
+                    const costPrice = parseFloat(item.Harga_Beli) || parseFloat(item.Harga_Modal) || 0;
+                    totalItems += qty;
+                    laba += (sellPrice - costPrice) * qty;
+                });
+            }
+        });
+
+        // Kurangi diskon dari laba
+        laba -= totalDiskon;
+
+        const avg = trxCount > 0 ? omset / trxCount : 0;
+
+        return { omset, laba, trxCount, totalItems, totalDiskon, avg };
+    },
+
+    formatRupiah: function(num) {
+        if (isNaN(num) || num === null || num === undefined) return 'Rp 0';
+        const abs = Math.abs(Math.round(num));
+        const formatted = abs.toLocaleString('id-ID');
+        return (num < 0 ? '-Rp ' : 'Rp ') + formatted;
+    },
+
+    calculateTrend: function(current, previous) {
+        if (previous === 0 && current === 0) return { pct: 0, dir: 'neutral' };
+        if (previous === 0) return { pct: 100, dir: 'up' };
+        const pct = ((current - previous) / Math.abs(previous)) * 100;
+        return {
+            pct: Math.abs(Math.round(pct)),
+            dir: pct > 0 ? 'up' : pct < 0 ? 'down' : 'neutral'
+        };
+    },
+
+    renderTrendBadge: function(elementId, trend) {
+        const el = document.getElementById(elementId);
+        if (!el) return;
+        if (trend.dir === 'up') {
+            el.className = 'metric-trend trend-up';
+            el.innerHTML = `<i class="fas fa-arrow-up"></i> ${trend.pct}%`;
+        } else if (trend.dir === 'down') {
+            el.className = 'metric-trend trend-down';
+            el.innerHTML = `<i class="fas fa-arrow-down"></i> ${trend.pct}%`;
+        } else {
+            el.className = 'metric-trend trend-neutral';
+            el.innerHTML = `— 0%`;
+        }
+    },
+
+    renderReports: function() {
+        const period = this._reportState.period;
+        const refDate = this.getRefDateFromInputs();
+
+        // Validate inputs
+        if (period === 'custom') {
+            if (!refDate.from || !refDate.to) return;
+        } else if (period === 'yearly') {
+            if (isNaN(refDate.getTime())) return;
+        } else {
+            if (!refDate || isNaN(refDate.getTime())) return;
+        }
+
+        // Get filtered transactions
+        const filtered = this.getFilteredTransactions(period, refDate);
+        this._reportState.cachedTransactions = filtered;
+
+        // Get previous period transactions for comparison
+        let prevFiltered = [];
+        if (period !== 'custom') {
+            const prevDate = this.getPreviousPeriodDate(period, refDate);
+            if (prevDate) {
+                prevFiltered = this.getFilteredTransactions(period, prevDate);
+            }
+        }
+        this._reportState.cachedPrevTransactions = prevFiltered;
+
+        // Calculate metrics
+        const metrics = this.calculateMetrics(filtered);
+        const prevMetrics = this.calculateMetrics(prevFiltered);
+
+        // Update metric cards
+        document.getElementById('metricOmset').textContent = this.formatRupiah(metrics.omset);
+        document.getElementById('metricLaba').textContent = this.formatRupiah(metrics.laba);
+        document.getElementById('metricTrx').textContent = metrics.trxCount.toLocaleString('id-ID');
+        document.getElementById('metricItem').textContent = metrics.totalItems.toLocaleString('id-ID');
+        document.getElementById('metricDiskon').textContent = this.formatRupiah(metrics.totalDiskon);
+        document.getElementById('metricAvg').textContent = this.formatRupiah(metrics.avg);
+
+        // Update trend badges
+        this.renderTrendBadge('trendOmset', this.calculateTrend(metrics.omset, prevMetrics.omset));
+        this.renderTrendBadge('trendLaba', this.calculateTrend(metrics.laba, prevMetrics.laba));
+        this.renderTrendBadge('trendTrx', this.calculateTrend(metrics.trxCount, prevMetrics.trxCount));
+        this.renderTrendBadge('trendItem', this.calculateTrend(metrics.totalItems, prevMetrics.totalItems));
+        this.renderTrendBadge('trendDiskon', this.calculateTrend(metrics.totalDiskon, prevMetrics.totalDiskon));
+        this.renderTrendBadge('trendAvg', this.calculateTrend(metrics.avg, prevMetrics.avg));
+
+        // Render charts
+        this.renderSalesChart(filtered, period, refDate);
+        this.renderPaymentChart(filtered);
+
+        // Render product ranking
+        this.renderProductRankTable(filtered, this._reportState.currentRankTab);
+    },
+
+    renderSalesChart: function(transactions, period, refDate) {
+        const canvas = document.getElementById('salesTrendChart');
+        if (!canvas) return;
+
+        // Destroy previous chart
+        if (this._reportState.salesChart) {
+            this._reportState.salesChart.destroy();
+            this._reportState.salesChart = null;
+        }
+
+        // Build labels and data based on period granularity
+        let labels = [];
+        let dataMap = {};
+
+        if (period === 'daily') {
+            // Hourly breakdown for daily
+            for (let h = 0; h < 24; h++) {
+                const label = String(h).padStart(2, '0') + ':00';
+                labels.push(label);
+                dataMap[label] = 0;
+            }
+            transactions.forEach(trx => {
+                const d = new Date(trx.timestamp);
+                const key = String(d.getHours()).padStart(2, '0') + ':00';
+                dataMap[key] += (parseFloat(trx.total) || 0);
+            });
+        } else if (period === 'weekly') {
+            const dayNames = ['Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab', 'Min'];
+            const d = new Date(refDate);
+            const day = d.getDay();
+            const diffToMonday = day === 0 ? -6 : 1 - day;
+            const monday = new Date(d);
+            monday.setDate(d.getDate() + diffToMonday);
+
+            for (let i = 0; i < 7; i++) {
+                const current = new Date(monday);
+                current.setDate(monday.getDate() + i);
+                const dateStr = current.toISOString().split('T')[0];
+                labels.push(dayNames[i]);
+                dataMap[dateStr] = 0;
+            }
+            const dateKeys = Object.keys(dataMap);
+            transactions.forEach(trx => {
+                const trxDate = new Date(trx.timestamp).toISOString().split('T')[0];
+                if (dataMap.hasOwnProperty(trxDate)) {
+                    dataMap[trxDate] += (parseFloat(trx.total) || 0);
+                }
+            });
+            // Convert to array by order
+            const dataValues = dateKeys.map(k => dataMap[k]);
+            dataMap = {};
+            labels.forEach((l, i) => { dataMap[l] = dataValues[i]; });
+        } else if (period === 'monthly') {
+            const year = refDate.getFullYear();
+            const month = refDate.getMonth();
+            const daysInMonth = new Date(year, month + 1, 0).getDate();
+            for (let d = 1; d <= daysInMonth; d++) {
+                const label = String(d);
+                labels.push(label);
+                const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+                dataMap[dateStr] = 0;
+            }
+            transactions.forEach(trx => {
+                const trxDate = new Date(trx.timestamp).toISOString().split('T')[0];
+                if (dataMap.hasOwnProperty(trxDate)) {
+                    dataMap[trxDate] += (parseFloat(trx.total) || 0);
+                }
+            });
+            const dateKeys = Object.keys(dataMap);
+            const dataValues = dateKeys.map(k => dataMap[k]);
+            dataMap = {};
+            labels.forEach((l, i) => { dataMap[l] = dataValues[i]; });
+        } else if (period === 'yearly') {
+            const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
+            labels = [...monthNames];
+            monthNames.forEach(m => { dataMap[m] = 0; });
+            transactions.forEach(trx => {
+                const d = new Date(trx.timestamp);
+                const key = monthNames[d.getMonth()];
+                dataMap[key] += (parseFloat(trx.total) || 0);
+            });
+        } else if (period === 'custom') {
+            // Group by date
+            const from = new Date(refDate.from);
+            const to = new Date(refDate.to);
+            const diffDays = Math.ceil((to - from) / (1000 * 60 * 60 * 24)) + 1;
+            for (let i = 0; i < diffDays && i < 90; i++) {
+                const current = new Date(from);
+                current.setDate(from.getDate() + i);
+                const dateStr = current.toISOString().split('T')[0];
+                const label = current.getDate() + '/' + (current.getMonth() + 1);
+                labels.push(label);
+                dataMap[dateStr] = 0;
+            }
+            transactions.forEach(trx => {
+                const trxDate = new Date(trx.timestamp).toISOString().split('T')[0];
+                if (dataMap.hasOwnProperty(trxDate)) {
+                    dataMap[trxDate] += (parseFloat(trx.total) || 0);
+                }
+            });
+            const dateKeys = Object.keys(dataMap);
+            const dataValues = dateKeys.map(k => dataMap[k]);
+            dataMap = {};
+            labels.forEach((l, i) => { dataMap[l] = dataValues[i]; });
+        }
+
+        const data = labels.map(l => dataMap[l] || 0);
+
+        this._reportState.salesChart = new Chart(canvas, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [{
+                    label: 'Omset (Rp)',
+                    data: data,
+                    borderColor: '#FF6B6B',
+                    backgroundColor: 'rgba(255, 107, 107, 0.1)',
+                    borderWidth: 2.5,
+                    fill: true,
+                    tension: 0.35,
+                    pointRadius: data.length > 31 ? 0 : 3,
+                    pointBackgroundColor: '#FF6B6B',
+                    pointHoverRadius: 6
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false },
+                    tooltip: {
+                        callbacks: {
+                            label: function(ctx) {
+                                return 'Rp ' + (ctx.raw || 0).toLocaleString('id-ID');
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    x: {
+                        grid: { display: false },
+                        ticks: { font: { size: 10, family: 'Outfit' }, maxRotation: 0, autoSkip: true, maxTicksLimit: 12 }
+                    },
+                    y: {
+                        grid: { color: 'rgba(0,0,0,0.05)' },
+                        ticks: {
+                            font: { size: 10, family: 'Outfit' },
+                            callback: function(val) {
+                                if (val >= 1000000) return (val / 1000000).toFixed(1) + 'jt';
+                                if (val >= 1000) return (val / 1000).toFixed(0) + 'rb';
+                                return val;
+                            }
+                        },
+                        beginAtZero: true
+                    }
+                }
+            }
+        });
+    },
+
+    renderPaymentChart: function(transactions) {
+        const canvas = document.getElementById('paymentMethodChart');
+        if (!canvas) return;
+
+        if (this._reportState.paymentChart) {
+            this._reportState.paymentChart.destroy();
+            this._reportState.paymentChart = null;
+        }
+
+        const methodMap = { 'Tunai': 0, 'Transfer': 0, 'QRIS': 0, 'Kasbon': 0 };
+        transactions.forEach(trx => {
+            const method = trx.method || 'Tunai';
+            if (methodMap.hasOwnProperty(method)) {
+                methodMap[method] += (parseFloat(trx.total) || 0);
+            } else {
+                methodMap[method] = (methodMap[method] || 0) + (parseFloat(trx.total) || 0);
+            }
+        });
+
+        const labels = Object.keys(methodMap).filter(k => methodMap[k] > 0);
+        const data = labels.map(k => methodMap[k]);
+        const colors = {
+            'Tunai': '#2ECC71',
+            'Transfer': '#3498DB',
+            'QRIS': '#9B59B6',
+            'Kasbon': '#F39C12'
+        };
+        const bgColors = labels.map(l => colors[l] || '#95a5a6');
+
+        if (data.length === 0) {
+            labels.push('Belum ada data');
+            data.push(1);
+            bgColors.push('#e2e8f0');
+        }
+
+        this._reportState.paymentChart = new Chart(canvas, {
+            type: 'doughnut',
+            data: {
+                labels: labels,
+                datasets: [{
+                    data: data,
+                    backgroundColor: bgColors,
+                    borderWidth: 2,
+                    borderColor: '#fff',
+                    hoverOffset: 8
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'bottom',
+                        labels: { font: { size: 11, family: 'Outfit' }, padding: 12, usePointStyle: true, pointStyle: 'circle' }
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label: function(ctx) {
+                                const total = ctx.dataset.data.reduce((a, b) => a + b, 0);
+                                const pct = total > 0 ? ((ctx.raw / total) * 100).toFixed(1) : 0;
+                                return ctx.label + ': Rp ' + ctx.raw.toLocaleString('id-ID') + ' (' + pct + '%)';
+                            }
+                        }
+                    }
+                },
+                cutout: '60%'
+            }
+        });
+    },
+
+    getTopProducts: function(transactions, sortBy) {
+        const productMap = {};
+
+        transactions.forEach(trx => {
+            if (!trx.items || !Array.isArray(trx.items)) return;
+            trx.items.forEach(item => {
+                const name = item.Nama_Camilan || 'Unknown';
+                const qty = parseInt(item.qty) || 0;
+                const sellPrice = parseFloat(item.editPrice) || parseFloat(item.Harga) || 0;
+                const costPrice = parseFloat(item.Harga_Beli) || parseFloat(item.Harga_Modal) || 0;
+                const revenue = sellPrice * qty;
+                const profit = (sellPrice - costPrice) * qty;
+
+                if (!productMap[name]) {
+                    productMap[name] = { name, totalQty: 0, totalRevenue: 0, totalProfit: 0 };
+                }
+                productMap[name].totalQty += qty;
+                productMap[name].totalRevenue += revenue;
+                productMap[name].totalProfit += profit;
+            });
+        });
+
+        const products = Object.values(productMap);
+
+        if (sortBy === 'terlaris') {
+            products.sort((a, b) => b.totalQty - a.totalQty);
+        } else {
+            products.sort((a, b) => b.totalProfit - a.totalProfit);
+        }
+
+        return products.slice(0, 10);
+    },
+
+    switchProductRankTab: function(tab) {
+        this._reportState.currentRankTab = tab;
+        const tabs = document.querySelectorAll('#productRankTabs .report-tab-btn');
+        tabs.forEach(t => t.classList.remove('active'));
+        if (tab === 'terlaris') {
+            tabs[0].classList.add('active');
+        } else {
+            tabs[1].classList.add('active');
+        }
+        this.renderProductRankTable(this._reportState.cachedTransactions, tab);
+    },
+
+    renderProductRankTable: function(transactions, sortBy) {
+        const tbody = document.getElementById('productRankBody');
+        if (!tbody) return;
+
+        const top = this.getTopProducts(transactions, sortBy);
+        if (top.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="4" style="text-align: center; color: #94a3b8; padding: 20px;"><i class="fas fa-box-open" style="font-size: 1.5rem; display: block; margin-bottom: 8px; opacity: 0.4;"></i>Belum ada data penjualan</td></tr>';
+            return;
+        }
+
+        // Update header based on tab
+        const headerRow = tbody.closest('table').querySelector('thead tr');
+        if (sortBy === 'terlaris') {
+            headerRow.innerHTML = '<th>#</th><th>Produk</th><th>Qty</th><th>Omset</th>';
+        } else {
+            headerRow.innerHTML = '<th>#</th><th>Produk</th><th>Qty</th><th>Laba</th>';
+        }
+
+        tbody.innerHTML = top.map((p, i) => {
+            let rankBadge;
+            if (i === 0) rankBadge = '<span class="rank-badge gold">1</span>';
+            else if (i === 1) rankBadge = '<span class="rank-badge silver">2</span>';
+            else if (i === 2) rankBadge = '<span class="rank-badge bronze">3</span>';
+            else rankBadge = `<span style="font-weight: 700; color: #94a3b8;">${i + 1}</span>`;
+
+            const valueCol = sortBy === 'terlaris'
+                ? this.formatRupiah(p.totalRevenue)
+                : this.formatRupiah(p.totalProfit);
+
+            return `<tr>
+                <td>${rankBadge}</td>
+                <td style="font-weight: 500;">${p.name}</td>
+                <td>${p.totalQty}</td>
+                <td>${valueCol}</td>
+            </tr>`;
+        }).join('');
+    },
+
+    shareReportWhatsApp: function() {
+        const period = this._reportState.period;
+        const filtered = this._reportState.cachedTransactions;
+        const metrics = this.calculateMetrics(filtered);
+        const top5 = this.getTopProducts(filtered, 'terlaris').slice(0, 5);
+
+        const settings = this.state.settings || {};
+        const shopName = settings.shopName || 'Kasir Manis';
+
+        // Build period label
+        let periodLabel = '';
+        const dateInput = document.getElementById('reportDate');
+        if (period === 'daily') {
+            const d = new Date(dateInput.value);
+            periodLabel = 'Harian — ' + d.toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+        } else if (period === 'weekly') {
+            periodLabel = 'Mingguan — Minggu ' + dateInput.value;
+        } else if (period === 'monthly') {
+            const parts = dateInput.value.split('-');
+            const d = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1);
+            periodLabel = 'Bulanan — ' + d.toLocaleDateString('id-ID', { month: 'long', year: 'numeric' });
+        } else if (period === 'yearly') {
+            periodLabel = 'Tahunan — ' + dateInput.value;
+        } else if (period === 'custom') {
+            const from = document.getElementById('reportDateFrom').value;
+            const to = document.getElementById('reportDateTo').value;
+            periodLabel = 'Kustom — ' + from + ' s/d ' + to;
+        }
+
+        let text = `📊 *LAPORAN ${shopName.toUpperCase()}*\n`;
+        text += `📅 ${periodLabel}\n`;
+        text += `━━━━━━━━━━━━━━━━━━\n`;
+        text += `💰 OMSET: ${this.formatRupiah(metrics.omset)}\n`;
+        text += `📈 LABA: ${this.formatRupiah(metrics.laba)}\n`;
+        text += `🧾 Transaksi: ${metrics.trxCount}\n`;
+        text += `📦 Item Terjual: ${metrics.totalItems}\n`;
+        text += `🏷️ Total Diskon: ${this.formatRupiah(metrics.totalDiskon)}\n`;
+        text += `💵 Rata-Rata/Trx: ${this.formatRupiah(metrics.avg)}\n`;
+        text += `━━━━━━━━━━━━━━━━━━\n`;
+
+        if (top5.length > 0) {
+            text += `🏆 *TOP 5 PRODUK TERLARIS:*\n`;
+            top5.forEach((p, i) => {
+                text += `${i + 1}. ${p.name} (${p.totalQty} pcs) — ${this.formatRupiah(p.totalRevenue)}\n`;
+            });
+        }
+
+        text += `\n_Dikirim via ${shopName} POS_`;
+
+        const encoded = encodeURIComponent(text);
+        window.open(`https://wa.me/?text=${encoded}`, '_blank');
     },
 
     // --- History & Debt ---

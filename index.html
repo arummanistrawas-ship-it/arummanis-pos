@@ -30,6 +30,7 @@
     <meta name="theme-color" content="#FF6B6B">
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 </head>
 <body>
     <div class="app-container">
@@ -81,6 +82,10 @@
                         <i class="fas fa-pause-circle"></i>
                         <h3>Transaksi Tersimpan</h3>
                         <span id="savedBadge" class="badge-count hidden">0</span>
+                    </div>
+                    <div class="dash-card" onclick="app.navigate('reports')">
+                        <i class="fas fa-chart-line"></i>
+                        <h3>Laporan Keuangan</h3>
                     </div>
                     <div class="dash-card full-width" onclick="app.navigate('settings')">
                         <i class="fas fa-cog"></i>
@@ -369,7 +374,121 @@
                 </div>
             </div>
 
-            <!-- 7. SETTINGS / PENGATURAN -->
+            <!-- 7. LAPORAN KEUANGAN & PENJUALAN -->
+            <section id="view-reports" class="view hidden">
+                <div class="card">
+                    <h3 style="color: var(--primary); border-bottom: 2px solid #f1f5f9; padding-bottom: 8px; margin-bottom: 10px;">
+                        <i class="fas fa-chart-line"></i> Laporan Keuangan & Penjualan
+                    </h3>
+
+                    <!-- Period Selector Pills -->
+                    <div class="report-period-selector" id="reportPeriodSelector">
+                        <button class="report-period-btn active" data-period="daily" onclick="app.changeReportPeriod('daily')">Harian</button>
+                        <button class="report-period-btn" data-period="weekly" onclick="app.changeReportPeriod('weekly')">Mingguan</button>
+                        <button class="report-period-btn" data-period="monthly" onclick="app.changeReportPeriod('monthly')">Bulanan</button>
+                        <button class="report-period-btn" data-period="yearly" onclick="app.changeReportPeriod('yearly')">Tahunan</button>
+                        <button class="report-period-btn" data-period="custom" onclick="app.changeReportPeriod('custom')">Kustom</button>
+                    </div>
+
+                    <!-- Date Picker (changes based on period) -->
+                    <div class="report-date-picker" id="reportDatePicker">
+                        <label for="reportDate">Tanggal:</label>
+                        <input type="date" id="reportDate" onchange="app.renderReports()">
+                    </div>
+                    <!-- Custom date range (hidden by default) -->
+                    <div class="report-date-picker hidden" id="reportCustomRange">
+                        <label for="reportDateFrom">Dari:</label>
+                        <input type="date" id="reportDateFrom" onchange="app.renderReports()">
+                        <label for="reportDateTo">Sampai:</label>
+                        <input type="date" id="reportDateTo" onchange="app.renderReports()">
+                    </div>
+
+                    <!-- 6 Metric Summary Cards -->
+                    <div class="report-metric-grid" id="reportMetricGrid">
+                        <div class="metric-card mc-omset">
+                            <div class="metric-icon">💰</div>
+                            <div class="metric-value" id="metricOmset">Rp 0</div>
+                            <div class="metric-label">OMSET Penjualan</div>
+                            <div class="metric-trend trend-neutral" id="trendOmset">— 0%</div>
+                        </div>
+                        <div class="metric-card mc-laba">
+                            <div class="metric-icon">📈</div>
+                            <div class="metric-value" id="metricLaba">Rp 0</div>
+                            <div class="metric-label">LABA / Keuntungan</div>
+                            <div class="metric-trend trend-neutral" id="trendLaba">— 0%</div>
+                        </div>
+                        <div class="metric-card mc-trx">
+                            <div class="metric-icon">🧾</div>
+                            <div class="metric-value" id="metricTrx">0</div>
+                            <div class="metric-label">Jumlah Transaksi</div>
+                            <div class="metric-trend trend-neutral" id="trendTrx">— 0%</div>
+                        </div>
+                        <div class="metric-card mc-item">
+                            <div class="metric-icon">📦</div>
+                            <div class="metric-value" id="metricItem">0</div>
+                            <div class="metric-label">Item Terjual</div>
+                            <div class="metric-trend trend-neutral" id="trendItem">— 0%</div>
+                        </div>
+                        <div class="metric-card mc-diskon">
+                            <div class="metric-icon">🏷️</div>
+                            <div class="metric-value" id="metricDiskon">Rp 0</div>
+                            <div class="metric-label">Total Diskon Keluar</div>
+                            <div class="metric-trend trend-neutral" id="trendDiskon">— 0%</div>
+                        </div>
+                        <div class="metric-card mc-avg">
+                            <div class="metric-icon">💵</div>
+                            <div class="metric-value" id="metricAvg">Rp 0</div>
+                            <div class="metric-label">Rata-Rata / Transaksi</div>
+                            <div class="metric-trend trend-neutral" id="trendAvg">— 0%</div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Charts Row -->
+                <div class="report-charts-row" style="margin-top: 12px;">
+                    <div class="report-chart-container">
+                        <h4><i class="fas fa-chart-area" style="color: var(--primary);"></i> Tren Penjualan</h4>
+                        <canvas id="salesTrendChart"></canvas>
+                    </div>
+                    <div class="report-chart-container">
+                        <h4><i class="fas fa-chart-pie" style="color: var(--secondary);"></i> Metode Pembayaran</h4>
+                        <canvas id="paymentMethodChart"></canvas>
+                    </div>
+                </div>
+
+                <!-- Product Ranking -->
+                <div class="card" style="margin-top: 12px;">
+                    <h3 style="color: var(--dark); font-size: 0.95rem; margin-bottom: 10px;">
+                        <i class="fas fa-trophy" style="color: #FFD700;"></i> Ranking Produk
+                    </h3>
+                    <div class="report-tab-selector" id="productRankTabs">
+                        <button class="report-tab-btn active" onclick="app.switchProductRankTab('terlaris')">🏆 Terlaris</button>
+                        <button class="report-tab-btn" onclick="app.switchProductRankTab('untung')">💎 Paling Untung</button>
+                    </div>
+                    <div style="overflow-x: auto;">
+                        <table class="product-rank-table">
+                            <thead>
+                                <tr>
+                                    <th>#</th>
+                                    <th>Produk</th>
+                                    <th>Qty</th>
+                                    <th>Total</th>
+                                </tr>
+                            </thead>
+                            <tbody id="productRankBody">
+                                <tr><td colspan="4" style="text-align: center; color: #94a3b8; padding: 20px;">Belum ada data</td></tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Share Button -->
+                <button class="report-share-btn" onclick="app.shareReportWhatsApp()" style="margin-top: 12px;">
+                    <i class="fab fa-whatsapp" style="font-size: 1.3rem;"></i> Bagikan Laporan via WhatsApp
+                </button>
+            </section>
+
+            <!-- 8. SETTINGS / PENGATURAN -->
             <section id="view-settings" class="view hidden">
                 <div class="card">
                     <form id="settingsForm" onsubmit="event.preventDefault(); app.saveSettings();">
