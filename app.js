@@ -1828,6 +1828,9 @@ const app = {
             logoPreviewImg.src = '';
             logoPreviewContainer.classList.add('hidden');
         }
+
+        // Update status printer Bluetooth di halaman Pengaturan
+        this.updatePrinterStatusUI();
     },
 
     handleLogoUpload: function(event) {
@@ -2168,6 +2171,144 @@ const app = {
                 }
             } catch (err) {
                 console.error("Gagal preloading paired devices:", err);
+            }
+        }
+        this.updatePrinterStatusUI();
+    },
+
+    updatePrinterStatusUI: function() {
+        const badge = document.getElementById('printerStatusBadge');
+        const nameEl = document.getElementById('printerDeviceName');
+        const discBtn = document.getElementById('btnDisconnectPrinter');
+        
+        if (!badge || !nameEl) return;
+
+        if (this.state.bluetoothDevice && (this.state.bluetoothDevice.name || this.state.bluetoothDevice.id)) {
+            const devName = this.state.bluetoothDevice.name || 'Printer Bluetooth';
+            badge.textContent = 'Terhubung ✓';
+            badge.className = 'status-badge bg-success';
+            nameEl.textContent = `Printer Aktif: ${devName}`;
+            if (discBtn) discBtn.classList.remove('hidden');
+        } else {
+            badge.textContent = 'Belum Terhubung';
+            badge.className = 'status-badge bg-warning';
+            nameEl.textContent = 'Belum ada printer Bluetooth yang tersambung.';
+            if (discBtn) discBtn.classList.add('hidden');
+        }
+    },
+
+    disconnectPrinter: function() {
+        if (this.state.bluetoothDevice && this.state.bluetoothDevice.gatt && this.state.bluetoothDevice.gatt.connected) {
+            try { this.state.bluetoothDevice.gatt.disconnect(); } catch (e) {}
+        }
+        this.state.bluetoothDevice = null;
+        this.state.bluetoothChar = null;
+        this.updatePrinterStatusUI();
+        Swal.fire({ toast: true, position: 'top-end', icon: 'info', title: 'Koneksi printer diputuskan', showConfirmButton: false, timer: 2000 });
+    },
+
+    previewTestPrint: function() {
+        const dummyTrx = {
+            id: 'TEST-' + Math.floor(1000 + Math.random() * 9000),
+            timestamp: new Date().toISOString(),
+            customer: 'Pelanggan Contoh',
+            items: [
+                { Nama_Camilan: 'Camilan Oleh-Oleh A', qty: 2, editPrice: 15000 },
+                { Nama_Camilan: 'Camilan Oleh-Oleh B', qty: 1, editPrice: 20000 }
+            ],
+            subtotal: 50000,
+            discount: 5000,
+            total: 45000,
+            method: 'Tunai',
+            cash: 50000,
+            change: 5000,
+            status: 'Lunas'
+        };
+        this.showReceipt(dummyTrx);
+    },
+
+    testConnectPrinter: async function() {
+        try {
+            if (!navigator.bluetooth) {
+                return Swal.fire('Tidak Didukung', 'Web Bluetooth tidak didukung di browser ini. Gunakan Chrome di Android/PC.', 'warning');
+            }
+
+            // Jika belum ada device tersimpan, panggil pairing browser
+            if (!this.state.bluetoothDevice) {
+                const device = await this.getBluetoothDevice();
+                if (!device) return;
+            }
+
+            const printChar = await this.connectToPrinter();
+            if (!printChar) {
+                throw new Error('Gagal mendapatkan akses cetak ke printer.');
+            }
+
+            // Print test receipt via ESC/POS
+            const settings = this.state.settings || { shopName: 'Kasir Manis', shopAddress: '', shopPhone: '', cashierName: 'Admin', receiptFooter: 'Terima Kasih!' };
+            const now = new Date();
+            const timeStr = now.toLocaleDateString('id-ID') + ' ' + now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+
+            const boldOn = new Uint8Array([0x1B, 0x45, 1]);
+            const boldOff = new Uint8Array([0x1B, 0x45, 0]);
+            const encoder = new TextEncoder();
+
+            let dataBuffer = [];
+
+            // Add logo if exists
+            if (settings.shopLogo && settings.shopLogo.startsWith('data:image/')) {
+                try {
+                    const logoBytes = await this.getLogoEscPosBytes(settings.shopLogo);
+                    dataBuffer.push(...logoBytes);
+                } catch (err) { console.error('Logo render error:', err); }
+            }
+
+            // Header text
+            dataBuffer.push(...encoder.encode('\n'));
+            dataBuffer.push(...boldOn);
+            dataBuffer.push(...encoder.encode((settings.shopName || 'Kasir Manis') + '\n'));
+            dataBuffer.push(...boldOff);
+            if (settings.shopAddress) dataBuffer.push(...encoder.encode(settings.shopAddress + '\n'));
+            if (settings.shopPhone) dataBuffer.push(...encoder.encode('Telp: ' + settings.shopPhone + '\n'));
+            
+            dataBuffer.push(...encoder.encode('--------------------------------\n'));
+            dataBuffer.push(...boldOn);
+            dataBuffer.push(...encoder.encode('*** TEST PRINT BERHASIL ***\n'));
+            dataBuffer.push(...boldOff);
+            dataBuffer.push(...encoder.encode('--------------------------------\n'));
+            
+            dataBuffer.push(...encoder.encode(`Waktu: ${timeStr}\n`));
+            dataBuffer.push(...encoder.encode(`Kasir: ${settings.cashierName || 'Admin'}\n`));
+            dataBuffer.push(...encoder.encode(`Status: PRINTER TERHUBUNG OK\n`));
+            dataBuffer.push(...encoder.encode('--------------------------------\n'));
+            dataBuffer.push(...encoder.encode('1x Test Print Item      Rp 0\n'));
+            dataBuffer.push(...encoder.encode('--------------------------------\n'));
+            dataBuffer.push(...boldOn);
+            dataBuffer.push(...encoder.encode('TOTAL:                  Rp 0\n'));
+            dataBuffer.push(...boldOff);
+            dataBuffer.push(...encoder.encode('--------------------------------\n'));
+            dataBuffer.push(...encoder.encode((settings.receiptFooter || 'Terima Kasih!') + '\n\n\n'));
+
+            // Write chunks to printer
+            const chunkSize = 100;
+            const fullBytes = new Uint8Array(dataBuffer);
+            for (let i = 0; i < fullBytes.length; i += chunkSize) {
+                const chunk = fullBytes.slice(i, i + chunkSize);
+                await printChar.writeValue(chunk);
+            }
+
+            this.updatePrinterStatusUI();
+
+            Swal.fire({
+                icon: 'success',
+                title: 'Test Print Berhasil!',
+                text: `Printer "${this.state.bluetoothDevice.name || 'Bluetooth'}" berhasil terhubung & tersimpan. Saat checkout transaksi nanti, printer akan mencetak otomatis tanpa perlu pairing ulang!`
+            });
+
+        } catch (e) {
+            console.error('Test print error:', e);
+            if (e.name !== 'NotFoundError') {
+                Swal.fire('Gagal Test Print', e.message || 'Gagal terhubung ke printer Bluetooth.', 'error');
             }
         }
     },

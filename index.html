@@ -412,6 +412,31 @@
                             <input type="text" id="setReceiptFooter" class="input-full" placeholder="Cth: Terima Kasih!" required>
                         </div>
 
+                        <h3 class="mb-1 mt-1" style="border-bottom: 2px solid #f1f5f9; padding-bottom: 5px; color: var(--primary);"><i class="fas fa-print"></i> Printer Bluetooth & Test Print</h3>
+                        <div class="form-group">
+                            <div style="background: #f8fafc; border: 1px solid #e2e8f0; padding: 12px; border-radius: 10px; margin-bottom: 10px;">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                                    <span style="font-weight: 600; font-size: 0.9rem; color: #475569;">Status Printer:</span>
+                                    <span id="printerStatusBadge" class="status-badge bg-warning" style="font-size: 0.85rem;">Belum Terhubung</span>
+                                </div>
+                                <div id="printerDeviceName" style="font-size: 0.85rem; color: #64748b; font-style: italic;">
+                                    Belum ada printer Bluetooth yang tersambung.
+                                </div>
+                            </div>
+                            
+                            <div style="display: flex; flex-direction: column; gap: 8px;">
+                                <button type="button" class="btn btn-primary btn-block" onclick="app.testConnectPrinter()" style="padding: 10px;">
+                                    <i class="fas fa-plug"></i> Hubungkan & Test Print Bluetooth
+                                </button>
+                                <button type="button" class="btn btn-secondary btn-block" onclick="app.previewTestPrint()" style="padding: 10px;">
+                                    <i class="fas fa-eye"></i> Preview Test Struk
+                                </button>
+                                <button type="button" id="btnDisconnectPrinter" class="btn btn-danger btn-block hidden" onclick="app.disconnectPrinter()" style="padding: 10px;">
+                                    <i class="fas fa-unlink"></i> Putuskan Printer
+                                </button>
+                            </div>
+                        </div>
+
                         <h3 class="mb-1 mt-1" style="border-bottom: 2px solid #f1f5f9; padding-bottom: 5px; color: var(--primary);"><i class="fas fa-server"></i> Koneksi Server</h3>
                         <div class="form-group">
                             <label>Google Apps Script Web App URL</label>
