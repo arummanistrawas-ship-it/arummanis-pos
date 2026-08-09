@@ -163,10 +163,16 @@ function getProducts() {
     var price = parseFloat(pData[i][pPriceCol]) || 0;
     var modal = pModalCol > -1 ? (parseFloat(pData[i][pModalCol]) || 0) : 0;
     
-    // Lookup stok: prioritas barcode, fallback ke nama produk
-    var lookupKey = (barcode && barcode !== "") ? barcode : name;
-    var totalStok = stokMap[lookupKey] || 0;
-    var productBatches = batchesMap[lookupKey] || [];
+    // Lookup stok: periksa barcode dulu, jika tidak ada/kosong, fallback ke nama produk
+    var totalStok = 0;
+    var productBatches = [];
+    if (barcode && barcode !== "" && stokMap[barcode] !== undefined) {
+      totalStok = stokMap[barcode];
+      productBatches = batchesMap[barcode] || [];
+    } else if (name && name !== "" && stokMap[name] !== undefined) {
+      totalStok = stokMap[name];
+      productBatches = batchesMap[name] || [];
+    }
     
     products.push({
       Barcode_ID: barcode,
@@ -420,26 +426,44 @@ function saveProduct(product) {
     pSheet.appendRow(newRow);
   }
   
-  // 2. Buat Batch Awal di StokBatch HANYA jika ini produk BARU (bukan edit) dan stok > 0
-  if (!exists && parseInt(product.Stok) > 0) {
-    var batchId = "B-" + Date.now();
-    var tanggalMasuk = formatDate(new Date());
-    var tanggalExpired = product.Tanggal_Expired || formatDate(new Date(Date.now() + 365*24*60*60*1000));
-    var hargaBeli = product.Harga_Beli || product.Harga_Modal || Math.floor(product.Harga * 0.8);
+  // 2. Buat Batch Awal di StokBatch jika belum ada batch aktif untuk produk ini dan stok > 0
+  var stokVal = parseInt(product.Stok) || 0;
+  if (stokVal > 0) {
+    var bData = bSheet.getDataRange().getDisplayValues();
+    var bBarcodeCol = bData[0].indexOf("Barcode_ID");
+    if (bBarcodeCol === -1) bBarcodeCol = 1;
+    
     var batchIdentifier = (product.Barcode_ID && product.Barcode_ID.toString().trim() !== "") 
       ? product.Barcode_ID.toString().trim() 
       : (product.Nama_Camilan || "").toString().trim();
+      
+    var hasBatch = false;
+    for (var k = 1; k < bData.length; k++) {
+      var rowIdentifier = bData[k][bBarcodeCol].toString().trim();
+      if (rowIdentifier !== "" && (rowIdentifier === batchIdentifier || (product.Nama_Camilan && rowIdentifier === product.Nama_Camilan.toString().trim()))) {
+        hasBatch = true;
+        break;
+      }
+    }
     
-    bSheet.appendRow([
-      batchId,
-      batchIdentifier,
-      tanggalMasuk,
-      tanggalExpired,
-      product.Stok,
-      product.Stok,
-      hargaBeli,
-      "Ready"
-    ]);
+    // Jika belum ada batch sama sekali di StokBatch untuk produk ini, buat batch pertamanya
+    if (!hasBatch) {
+      var batchId = "B-" + Date.now();
+      var tanggalMasuk = formatDate(new Date());
+      var tanggalExpired = product.Tanggal_Expired || formatDate(new Date(Date.now() + 365*24*60*60*1000));
+      var hargaBeli = product.Harga_Beli || product.Harga_Modal || Math.floor(product.Harga * 0.8);
+      
+      bSheet.appendRow([
+        batchId,
+        batchIdentifier,
+        tanggalMasuk,
+        tanggalExpired,
+        stokVal,
+        stokVal,
+        hargaBeli,
+        "Ready"
+      ]);
+    }
   }
   
   return successResponse('Produk dan batch berhasil disimpan');
