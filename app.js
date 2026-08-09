@@ -73,7 +73,23 @@ const convertDateToSheetFormat = (dateStr) => {
 // Helper pembanding barcode tahan crash tipe data (String/Number) dan Null/Undefined
 const compareBarcode = (a, b) => {
     if (a === null || a === undefined || b === null || b === undefined) return false;
-    return a.toString().trim() === b.toString().trim();
+    const strA = a.toString().trim();
+    const strB = b.toString().trim();
+    if (strA === "" || strB === "") return false;
+    return strA === strB;
+};
+
+// Helper pencari produk yang mendukung pencocokan Barcode_ID maupun Nama_Camilan
+const findProduct = (products, identifier, name) => {
+    if (!products || !Array.isArray(products)) return null;
+    if (identifier && identifier.toString().trim() !== "") {
+        const found = products.find(x => compareBarcode(x.Barcode_ID, identifier));
+        if (found) return found;
+    }
+    if (name && name.toString().trim() !== "") {
+        return products.find(x => x.Nama_Camilan === name.toString().trim());
+    }
+    return null;
 };
 
 const app = {
@@ -1046,10 +1062,9 @@ const app = {
         };
 
         // Update local stock
-        // C7 Fix: Record batch deductions for potential rollback on editLastTransaction
         const batchDeductions = [];
         trx.items.forEach(item => {
-            const p = this.state.products.find(x => compareBarcode(x.Barcode_ID, item.Barcode_ID));
+            const p = findProduct(this.state.products, item.Barcode_ID, item.Nama_Camilan);
             if(p) {
                 p.Stok = parseInt(p.Stok) - item.qty;
                 if(p.Stok <= 0) p.Status = 'Habis';
@@ -1072,7 +1087,7 @@ const app = {
                         qtyToDeduct -= deduct;
                         itemDeductions.push({ batchId: batch.batchId, qty: deduct });
                     }
-                    batchDeductions.push({ barcode: item.Barcode_ID, deductions: itemDeductions });
+                    batchDeductions.push({ barcode: item.Barcode_ID || item.Nama_Camilan, deductions: itemDeductions });
                     // Hanya pertahankan batch yang masih memiliki stok sisa
                     p.batches = p.batches.filter(b => b.stokSisa > 0);
                 }
@@ -1209,7 +1224,7 @@ const app = {
             if(res.isConfirmed) {
                 // 1. Kembalikan stok produk lokal
                 trx.items.forEach(item => {
-                    const p = this.state.products.find(x => compareBarcode(x.Barcode_ID, item.Barcode_ID));
+                    const p = findProduct(this.state.products, item.Barcode_ID, item.Nama_Camilan);
                     if(p) {
                         p.Stok = parseInt(p.Stok) + item.qty;
                         if(p.Status === 'Habis') p.Status = 'Ready';
@@ -1219,7 +1234,7 @@ const app = {
                 // 2. Restore batch deductions
                 if (trx.batchDeductions && Array.isArray(trx.batchDeductions)) {
                     trx.batchDeductions.forEach(bd => {
-                        const p = this.state.products.find(x => compareBarcode(x.Barcode_ID, bd.barcode));
+                        const p = findProduct(this.state.products, bd.barcode, bd.barcode);
                         if (p && p.batches && Array.isArray(p.batches)) {
                             bd.deductions.forEach(d => {
                                 const batch = p.batches.find(b => b.batchId === d.batchId);
