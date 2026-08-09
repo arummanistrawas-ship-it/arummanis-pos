@@ -452,7 +452,7 @@ const app = {
         }
     },
 
-     addToCart: function(product) {
+     addToCart: function(product, forceOverride) {
         // Cek ketersediaan stok sebelum menambahkan ke keranjang
         const currentStok = parseInt(product.Stok) || 0;
         const existing = this.state.cart.find(x => {
@@ -463,12 +463,32 @@ const app = {
         });
 
         const qtyInCart = existing ? existing.qty : 0;
-        if (currentStok <= 0) {
-            Swal.fire({ toast: true, position: 'top-end', icon: 'warning', title: `${product.Nama_Camilan} — Stok habis!`, showConfirmButton: false, timer: 2000 });
-            return;
-        }
-        if (qtyInCart >= currentStok) {
-            Swal.fire({ toast: true, position: 'top-end', icon: 'warning', title: `${product.Nama_Camilan} — Stok tersisa ${currentStok}, sudah ${qtyInCart} di keranjang`, showConfirmButton: false, timer: 2500 });
+        const willExceed = qtyInCart >= currentStok;
+
+        // Jika stok habis/melebihi DAN belum di-override → tanya kasir
+        if (willExceed && !forceOverride) {
+            const sisaText = currentStok <= 0
+                ? 'Stok di sistem: <b>HABIS (0)</b>'
+                : `Stok di sistem: <b>${currentStok}</b>, sudah <b>${qtyInCart}</b> di keranjang`;
+
+            Swal.fire({
+                title: 'Stok Tidak Cukup',
+                html: `<div style="text-align:left; font-size: 0.92rem;">
+                    <p><b>${product.Nama_Camilan}</b></p>
+                    <p>${sisaText}</p>
+                    <hr style="margin: 8px 0; border-color: #f1f5f9;">
+                    <p style="color: #64748b;">Jika barang <b>fisik masih ada di etalase</b>, Anda bisa tetap menjual. Stok akan tercatat minus sebagai pengingat untuk restok/stock opname.</p>
+                </div>`,
+                icon: 'warning',
+                showCancelButton: true,
+                confirmButtonText: '🛒 Tetap Jual',
+                cancelButtonText: 'Batal',
+                confirmButtonColor: '#F39C12'
+            }).then((res) => {
+                if (res.isConfirmed) {
+                    this.addToCart(product, true); // Panggil ulang dengan forceOverride=true
+                }
+            });
             return;
         }
 
@@ -478,7 +498,13 @@ const app = {
             this.state.cart.push({ ...product, qty: 1, editPrice: parseInt(product.Harga) });
         }
         this.updateCartUI();
-        Swal.fire({ toast:true, position:'top-end', icon:'success', title:`${product.Nama_Camilan} ditambahkan (Sisa: ${currentStok - qtyInCart - 1})`, showConfirmButton:false, timer:1500 });
+
+        const sisaSetelah = currentStok - qtyInCart - 1;
+        if (sisaSetelah < 0) {
+            Swal.fire({ toast: true, position: 'top-end', icon: 'info', title: `${product.Nama_Camilan} ditambahkan (Stok minus: ${sisaSetelah})`, showConfirmButton: false, timer: 2000 });
+        } else {
+            Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: `${product.Nama_Camilan} ditambahkan (Sisa: ${sisaSetelah})`, showConfirmButton: false, timer: 1500 });
+        }
     },
 
     updateCartItem: function(identifier, field, value) {
@@ -493,7 +519,7 @@ const app = {
                     this.removeCartItem(identifier);
                     return;
                 }
-                // Validasi batas stok: cari produk di daftar untuk cek stok tersedia
+                // Peringatan jika melebihi stok, tapi tetap izinkan
                 const product = this.state.products.find(p =>
                     (p.Barcode_ID && item.Barcode_ID && p.Barcode_ID.toString().trim() === item.Barcode_ID.toString().trim()) ||
                     p.Nama_Camilan === item.Nama_Camilan
@@ -501,14 +527,10 @@ const app = {
                 if (product) {
                     const maxStok = parseInt(product.Stok) || 0;
                     if (q > maxStok) {
-                        Swal.fire({ toast: true, position: 'top-end', icon: 'warning', title: `Stok ${item.Nama_Camilan} hanya tersisa ${maxStok}`, showConfirmButton: false, timer: 2000 });
-                        item.qty = maxStok;
-                    } else {
-                        item.qty = q;
+                        Swal.fire({ toast: true, position: 'top-end', icon: 'info', title: `${item.Nama_Camilan} — Qty (${q}) melebihi stok sistem (${maxStok})`, showConfirmButton: false, timer: 2500 });
                     }
-                } else {
-                    item.qty = q;
                 }
+                item.qty = q;
             }
             if(field === 'price') item.editPrice = parseInt(value) || 0;
             this.updateCartUI();
@@ -1038,8 +1060,8 @@ const app = {
         trx.items.forEach(item => {
             const p = this.state.products.find(x => compareBarcode(x.Barcode_ID, item.Barcode_ID));
             if(p) {
-                p.Stok = Math.max(0, parseInt(p.Stok) - item.qty);
-                if(p.Stok === 0) p.Status = 'Habis';
+                p.Stok = parseInt(p.Stok) - item.qty;
+                if(p.Stok <= 0) p.Status = 'Habis';
 
                 // Kurangi stok batch lokal secara FIFO
                 if (p.batches && Array.isArray(p.batches)) {
