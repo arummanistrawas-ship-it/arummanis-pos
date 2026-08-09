@@ -190,6 +190,18 @@ function processTransaction(transaction) {
   var bSheet = ss.getSheetByName("StokBatch");
   var tSheet = ss.getSheetByName("DatabaseTransaksi");
   
+  // Anti-Duplikasi: Cegah transaksi dikurangi/dicatat dua kali jika koneksi internet terputus saat sync
+  var tData = tSheet.getDataRange().getDisplayValues();
+  if (tData.length > 1) {
+    var tIdCol = tData[0].indexOf("ID");
+    if (tIdCol === -1) tIdCol = 0;
+    for (var tx = 1; tx < tData.length; tx++) {
+      if (tData[tx][tIdCol].toString().trim() === transaction.id.toString().trim()) {
+        return successResponse('Transaksi ' + transaction.id + ' sudah pernah diproses (diabaikan duplikasi)');
+      }
+    }
+  }
+  
   var bData = bSheet.getDataRange().getDisplayValues();
   var bHeaders = bData[0];
   
@@ -583,8 +595,39 @@ function deleteTransaction(data) {
   initSheets();
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var tSheet = ss.getSheetByName("DatabaseTransaksi");
+  var bSheet = ss.getSheetByName("StokBatch");
   if (!tSheet) return errorResponse('Sheet "DatabaseTransaksi" tidak ditemukan');
   
+  // 1. Kembalikan stok batch di Google Sheets jika ada data batchDeductions
+  if (bSheet && data.batchDeductions && Array.isArray(data.batchDeductions)) {
+    var bData = bSheet.getDataRange().getDisplayValues();
+    var bHeaders = bData[0];
+    var bIdCol = bHeaders.indexOf("Batch_ID");
+    var bSisaCol = bHeaders.indexOf("Stok_Sisa");
+    var bStatusCol = bHeaders.indexOf("Status");
+    
+    if (bIdCol > -1 && bSisaCol > -1) {
+      data.batchDeductions.forEach(function(bd) {
+        if (bd.deductions && Array.isArray(bd.deductions)) {
+          bd.deductions.forEach(function(d) {
+            for (var row = 1; row < bData.length; row++) {
+              if (bData[row][bIdCol].toString().trim() === d.batchId.toString().trim()) {
+                var currentSisa = parseInt(bData[row][bSisaCol]) || 0;
+                var restoredSisa = currentSisa + (parseInt(d.qty) || 0);
+                bSheet.getRange(row + 1, bSisaCol + 1).setValue(restoredSisa);
+                if (bStatusCol > -1) {
+                  bSheet.getRange(row + 1, bStatusCol + 1).setValue(restoredSisa > 0 ? "Ready" : "Habis");
+                }
+                break;
+              }
+            }
+          });
+        }
+      });
+    }
+  }
+  
+  // 2. Hapus baris transaksi dari DatabaseTransaksi
   var tData = tSheet.getDataRange().getValues();
   if (tData.length < 2) return successResponse('Sheet transaksi kosong');
   
@@ -594,7 +637,7 @@ function deleteTransaction(data) {
   for (var i = 1; i < tData.length; i++) {
     if (tData[i][idCol].toString().trim() === data.id.toString().trim()) {
       tSheet.deleteRow(i + 1);
-      return successResponse('Transaksi ' + data.id + ' berhasil dihapus dari Google Sheets');
+      return successResponse('Transaksi ' + data.id + ' berhasil dihapus & stok dikembalikan di Google Sheets');
     }
   }
   return successResponse('Transaksi ' + data.id + ' tidak ditemukan di Google Sheets');

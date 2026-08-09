@@ -1260,7 +1260,7 @@ const app = {
                     // Jika sudah telanjur tersimpan di Google Sheets, kirim perintah hapus transaksi ke server
                     this.state.syncQueue.push({
                         type: 'delete_transaction',
-                        data: { id: trx.id }
+                        data: { id: trx.id, batchDeductions: trx.batchDeductions }
                     });
                 }
                 
