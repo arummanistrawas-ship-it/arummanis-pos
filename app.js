@@ -453,19 +453,32 @@ const app = {
     },
 
      addToCart: function(product) {
+        // Cek ketersediaan stok sebelum menambahkan ke keranjang
+        const currentStok = parseInt(product.Stok) || 0;
         const existing = this.state.cart.find(x => {
             if (product.Barcode_ID && product.Barcode_ID.toString().trim() !== "") {
                 return x.Barcode_ID && x.Barcode_ID.toString().trim() === product.Barcode_ID.toString().trim();
             }
             return x.Nama_Camilan === product.Nama_Camilan;
         });
+
+        const qtyInCart = existing ? existing.qty : 0;
+        if (currentStok <= 0) {
+            Swal.fire({ toast: true, position: 'top-end', icon: 'warning', title: `${product.Nama_Camilan} — Stok habis!`, showConfirmButton: false, timer: 2000 });
+            return;
+        }
+        if (qtyInCart >= currentStok) {
+            Swal.fire({ toast: true, position: 'top-end', icon: 'warning', title: `${product.Nama_Camilan} — Stok tersisa ${currentStok}, sudah ${qtyInCart} di keranjang`, showConfirmButton: false, timer: 2500 });
+            return;
+        }
+
         if(existing) {
             existing.qty += 1;
         } else {
             this.state.cart.push({ ...product, qty: 1, editPrice: parseInt(product.Harga) });
         }
         this.updateCartUI();
-        Swal.fire({ toast:true, position:'top-end', icon:'success', title:`${product.Nama_Camilan} ditambahkan`, showConfirmButton:false, timer:1500 });
+        Swal.fire({ toast:true, position:'top-end', icon:'success', title:`${product.Nama_Camilan} ditambahkan (Sisa: ${currentStok - qtyInCart - 1})`, showConfirmButton:false, timer:1500 });
     },
 
     updateCartItem: function(identifier, field, value) {
@@ -475,11 +488,24 @@ const app = {
         );
         if(item) {
             if(field === 'qty') {
-                // C5 Fix: Allow qty=0 to trigger item removal (was: parseInt(0)||1 = 1)
                 const q = parseInt(value);
                 if (isNaN(q) || q <= 0) {
                     this.removeCartItem(identifier);
                     return;
+                }
+                // Validasi batas stok: cari produk di daftar untuk cek stok tersedia
+                const product = this.state.products.find(p =>
+                    (p.Barcode_ID && item.Barcode_ID && p.Barcode_ID.toString().trim() === item.Barcode_ID.toString().trim()) ||
+                    p.Nama_Camilan === item.Nama_Camilan
+                );
+                if (product) {
+                    const maxStok = parseInt(product.Stok) || 0;
+                    if (q > maxStok) {
+                        Swal.fire({ toast: true, position: 'top-end', icon: 'warning', title: `Stok ${item.Nama_Camilan} hanya tersisa ${maxStok}`, showConfirmButton: false, timer: 2000 });
+                        item.qty = maxStok;
+                    } else {
+                        item.qty = q;
+                    }
                 } else {
                     item.qty = q;
                 }
@@ -2433,10 +2459,58 @@ const app = {
         }
         
         if (successCount > 0) {
-            document.getElementById('syncText').textContent = `${successCount} data tersinkronisasi!`;
+            document.getElementById('syncText').textContent = `${successCount} data tersinkronisasi! Memperbarui stok...`;
+            // Refresh data produk dari server agar stok lokal sinkron dengan Google Sheets
+            await this.refreshProductsFromServer();
             setTimeout(() => this.checkOfflineQueue(), 2000);
         } else {
             this.checkOfflineQueue();
+        }
+    },
+
+    refreshProductsFromServer: async function() {
+        if (!navigator.onLine || GAS_URL === 'YOUR_GOOGLE_APPS_SCRIPT_WEB_APP_URL') return;
+        try {
+            const response = await fetch(`${GAS_URL}?action=getProducts`);
+            const resData = await response.json();
+            if (resData.status === 'success' && resData.data) {
+                // Merge: perbarui stok & batches dari server, tapi pertahankan perubahan lokal yang belum tersync
+                const serverProducts = resData.data;
+                const pendingTrxItems = [];
+
+                // Kumpulkan item dari transaksi yang masih di antrean sync (belum terkirim ke server)
+                this.state.syncQueue.forEach(q => {
+                    if (q.type === 'transaction' && q.data && q.data.items) {
+                        q.data.items.forEach(item => {
+                            pendingTrxItems.push({
+                                barcode: item.Barcode_ID,
+                                name: item.Nama_Camilan,
+                                qty: parseInt(item.qty) || 0
+                            });
+                        });
+                    }
+                });
+
+                // Terapkan pengurangan stok lokal yang pending di atas stok server
+                serverProducts.forEach(sp => {
+                    pendingTrxItems.forEach(pending => {
+                        const match = (sp.Barcode_ID && pending.barcode &&
+                            sp.Barcode_ID.toString().trim() !== '' &&
+                            sp.Barcode_ID.toString().trim() === pending.barcode.toString().trim()) ||
+                            sp.Nama_Camilan === pending.name;
+                        if (match) {
+                            sp.Stok = Math.max(0, parseInt(sp.Stok) - pending.qty);
+                            if (sp.Stok === 0) sp.Status = 'Habis';
+                        }
+                    });
+                });
+
+                this.state.products = serverProducts;
+                this.saveData();
+                console.log('Stok produk diperbarui dari server setelah sync');
+            }
+        } catch (e) {
+            console.error('Gagal refresh produk dari server:', e);
         }
     },
 
