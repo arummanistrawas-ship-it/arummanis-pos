@@ -348,19 +348,26 @@ function saveProduct(product) {
   
   var pData = pSheet.getDataRange().getDisplayValues();
   var pHeaders = pData[0];
-  var pBarcodeCol = pHeaders.indexOf("Barcode_ID");
   
-  // 1. Update/Insert ke DatabaseProduk
+  var pBarcodeCol = pHeaders.indexOf("Barcode_ID");
+  if (pBarcodeCol === -1) pBarcodeCol = 0;
+  var pNameCol = pHeaders.indexOf("Nama_Camilan");
+  if (pNameCol === -1) pNameCol = 1;
+  var pPriceCol = pHeaders.indexOf("Harga_Jual");
+  if (pPriceCol === -1) pPriceCol = pHeaders.indexOf("Harga");
+  if (pPriceCol === -1) pPriceCol = 2;
+  var pModalCol = pHeaders.indexOf("Harga_Modal");
+  if (pModalCol === -1) pModalCol = pHeaders.indexOf("Harga_Beli");
+
+  var searchBarcode = (product.oldBarcode && product.oldBarcode !== "") ? product.oldBarcode : product.Barcode_ID;
   var exists = false;
   var prodRow = -1;
-  var searchBarcode = (product.oldBarcode && product.oldBarcode !== "") ? product.oldBarcode : product.Barcode_ID;
   
-  // Cari berdasarkan barcode ATAU berdasarkan _sheetRow (untuk produk tanpa barcode)
+  // 1. Cari apakah produk sudah ada di DatabaseProduk
   if (product._sheetRow && product._sheetRow > 1) {
-    // Lookup langsung via nomor baris sheet
     prodRow = product._sheetRow;
     exists = true;
-  } else if (searchBarcode && searchBarcode !== "") {
+  } else if (searchBarcode && searchBarcode.toString().trim() !== "") {
     for (var i = 1; i < pData.length; i++) {
       if (pData[i][pBarcodeCol].toString().trim() === searchBarcode.toString().trim()) {
         exists = true;
@@ -370,10 +377,8 @@ function saveProduct(product) {
     }
   }
   
-  // Fallback: cari berdasarkan Nama_Camilan jika barcode kosong
+  // Fallback: cari berdasarkan Nama_Camilan jika barcode tidak cocok/kosong
   if (!exists && product.Nama_Camilan) {
-    var pNameCol = pHeaders.indexOf("Nama_Camilan");
-    if (pNameCol === -1) pNameCol = 1;
     for (var i = 1; i < pData.length; i++) {
       if (pData[i][pNameCol].toString().trim() === product.Nama_Camilan.toString().trim()) {
         exists = true;
@@ -383,54 +388,55 @@ function saveProduct(product) {
     }
   }
   
-  // Tentukan jumlah kolom yang akan ditulis berdasarkan header sheet
-  var pPriceCol = pHeaders.indexOf("Harga_Jual");
-  if (pPriceCol === -1) pPriceCol = pHeaders.indexOf("Harga");
-  if (pPriceCol === -1) pPriceCol = 2;
-  var pModalCol = pHeaders.indexOf("Harga_Modal");
-  if (pModalCol === -1) pModalCol = pHeaders.indexOf("Harga_Beli");
-  
   if (exists) {
-    // Update kolom yang ada
+    // Update data produk di baris prodRow sesuai indeks header
     pSheet.getRange(prodRow, pBarcodeCol + 1).setValue(product.Barcode_ID || "");
-    var pNameColIdx = pHeaders.indexOf("Nama_Camilan");
-    if (pNameColIdx === -1) pNameColIdx = 1;
-    pSheet.getRange(prodRow, pNameColIdx + 1).setValue(product.Nama_Camilan);
-    pSheet.getRange(prodRow, pPriceCol + 1).setValue(product.Harga);
-    if (pModalCol > -1 && product.Harga_Beli) {
-      pSheet.getRange(prodRow, pModalCol + 1).setValue(product.Harga_Beli);
+    pSheet.getRange(prodRow, pNameCol + 1).setValue(product.Nama_Camilan || "");
+    pSheet.getRange(prodRow, pPriceCol + 1).setValue(product.Harga || 0);
+    if (pModalCol > -1) {
+      pSheet.getRange(prodRow, pModalCol + 1).setValue(product.Harga_Beli || product.Harga_Modal || 0);
     }
     
-    // Jika barcode diubah, perbarui juga Barcode_ID di seluruh batch StokBatch
-    if (product.oldBarcode && product.oldBarcode !== "" && product.oldBarcode.toString() !== product.Barcode_ID.toString()) {
+    // Jika barcode diubah, update Barcode_ID di StokBatch
+    if (product.oldBarcode && product.oldBarcode.toString().trim() !== "" && product.oldBarcode.toString() !== product.Barcode_ID.toString()) {
       var bData = bSheet.getDataRange().getDisplayValues();
       var bBarcodeCol = bData[0].indexOf("Barcode_ID");
       if (bBarcodeCol > -1) {
         for (var j = 1; j < bData.length; j++) {
-          if (bData[j][bBarcodeCol].toString() === product.oldBarcode.toString()) {
-            bSheet.getRange(j + 1, bBarcodeCol + 1).setValue(product.Barcode_ID);
+          if (bData[j][bBarcodeCol].toString().trim() === product.oldBarcode.toString().trim()) {
+            bSheet.getRange(j + 1, bBarcodeCol + 1).setValue(product.Barcode_ID || product.Nama_Camilan);
           }
         }
       }
     }
   } else {
-    pSheet.appendRow([product.Barcode_ID, product.Nama_Camilan, product.Harga]);
+    // Sisipkan produk baru sesuai urutan header kolom sheet
+    var maxCol = Math.max(pBarcodeCol, pNameCol, pPriceCol, pModalCol) + 1;
+    var newRow = new Array(maxCol).fill("");
+    newRow[pBarcodeCol] = product.Barcode_ID || "";
+    newRow[pNameCol] = product.Nama_Camilan || "";
+    newRow[pPriceCol] = product.Harga || 0;
+    if (pModalCol > -1) newRow[pModalCol] = product.Harga_Beli || product.Harga_Modal || 0;
+    pSheet.appendRow(newRow);
   }
   
-  // 2. Buat Batch Awal di StokBatch (HANYA jika produk BARU dan stok > 0)
-  if (!product.oldBarcode && parseInt(product.Stok) > 0) {
+  // 2. Buat Batch Awal di StokBatch HANYA jika ini produk BARU (bukan edit) dan stok > 0
+  if (!exists && parseInt(product.Stok) > 0) {
     var batchId = "B-" + Date.now();
     var tanggalMasuk = formatDate(new Date());
-    var tanggalExpired = product.Tanggal_Expired || formatDate(new Date(Date.now() + 365*24*60*60*1000)); // Default 1 tahun
-    var hargaBeli = product.Harga_Beli || Math.floor(product.Harga * 0.8); // Default modal 80% harga jual
+    var tanggalExpired = product.Tanggal_Expired || formatDate(new Date(Date.now() + 365*24*60*60*1000));
+    var hargaBeli = product.Harga_Beli || product.Harga_Modal || Math.floor(product.Harga * 0.8);
+    var batchIdentifier = (product.Barcode_ID && product.Barcode_ID.toString().trim() !== "") 
+      ? product.Barcode_ID.toString().trim() 
+      : (product.Nama_Camilan || "").toString().trim();
     
     bSheet.appendRow([
       batchId,
-      product.Barcode_ID,
+      batchIdentifier,
       tanggalMasuk,
       tanggalExpired,
       product.Stok,
-      product.Stok, // Stok_Sisa awal = Stok_Awal
+      product.Stok,
       hargaBeli,
       "Ready"
     ]);
