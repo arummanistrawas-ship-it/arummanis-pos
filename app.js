@@ -239,17 +239,8 @@ const app = {
                 console.error('Gagal memuat produk dari Sheets:', error);
             }
             
-            // Sync settings dari server jika lokal kosong
-            if (!localStorage.getItem('pos_settings')) {
-                try {
-                    const settingsResp = await fetch(`${GAS_URL}?action=get_settings`);
-                    const settingsData = await settingsResp.json();
-                    if (settingsData.status === 'success' && settingsData.data && Object.keys(settingsData.data).length > 0) {
-                        Object.assign(this.state.settings, settingsData.data);
-                        localStorage.setItem('pos_settings', JSON.stringify(this.state.settings));
-                    }
-                } catch (e) { console.error('Gagal memuat settings dari server:', e); }
-            }
+            // Selalu tarik profil usaha terbaru dari Google Sheets saat online
+            await this.refreshSettingsFromServer();
             
             // Sinkronisasi antrean offline yang tertunda setelah konek kembali
             this.syncData();
@@ -2481,9 +2472,10 @@ const app = {
         }
         
         if (successCount > 0) {
-            document.getElementById('syncText').textContent = `${successCount} data tersinkronisasi! Memperbarui stok...`;
-            // Refresh data produk dari server agar stok lokal sinkron dengan Google Sheets
+            document.getElementById('syncText').textContent = `${successCount} data tersinkronisasi! Memperbarui stok & profil...`;
+            // Refresh data produk dan pengaturan dari server agar sinkron dengan Google Sheets
             await this.refreshProductsFromServer();
+            await this.refreshSettingsFromServer();
             setTimeout(() => this.checkOfflineQueue(), 2000);
         } else {
             this.checkOfflineQueue();
@@ -2533,6 +2525,29 @@ const app = {
             }
         } catch (e) {
             console.error('Gagal refresh produk dari server:', e);
+        }
+    },
+
+    refreshSettingsFromServer: async function() {
+        if (!navigator.onLine || GAS_URL === 'YOUR_GOOGLE_APPS_SCRIPT_WEB_APP_URL') return;
+        try {
+            const settingsResp = await fetch(`${GAS_URL}?action=get_settings`);
+            const settingsData = await settingsResp.json();
+            if (settingsData.status === 'success' && settingsData.data && Object.keys(settingsData.data).length > 0) {
+                const localLogo = this.state.settings.shopLogo;
+                Object.assign(this.state.settings, settingsData.data);
+                // Pertahankan logo gambar lokal jika server tidak menyimpan logo
+                if (localLogo && !this.state.settings.shopLogo) {
+                    this.state.settings.shopLogo = localLogo;
+                }
+                localStorage.setItem('pos_settings', JSON.stringify(this.state.settings));
+                if (this.state.currentView === 'settings') {
+                    this.showSettingsForm();
+                }
+                console.log('Profil usaha diperbarui dari server:', this.state.settings.shopName);
+            }
+        } catch (e) {
+            console.error('Gagal memuat settings dari server:', e);
         }
     },
 

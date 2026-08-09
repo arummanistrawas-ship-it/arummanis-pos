@@ -527,15 +527,17 @@ function saveSettings(data) {
     sheet.getRange(2, 1, lastRow - 1, 2).clearContent();
   }
   
-  // Write each setting as a key-value row
   var keys = Object.keys(data);
+  var rows = [];
   for (var i = 0; i < keys.length; i++) {
     var key = keys[i];
-    var value = data[key] || '';
-    // Skip shopLogo (base64 images are too large for sheets)
-    if (key === 'shopLogo') continue;
-    sheet.getRange(i + 2, 1).setValue(key);
-    sheet.getRange(i + 2, 2).setValue(value);
+    if (key === 'shopLogo') continue; // Skip logo base64 gambar yang besar
+    var value = data[key] !== undefined && data[key] !== null ? data[key].toString() : '';
+    rows.push([key, value]);
+  }
+  
+  if (rows.length > 0) {
+    sheet.getRange(2, 1, rows.length, 2).setValues(rows);
   }
   
   return successResponse('Pengaturan berhasil disimpan');
