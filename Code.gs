@@ -99,54 +99,79 @@ function initSheets() {
 }
 
 function syncStokBatchProductNames() {
+  return fixAndFillStokBatchNames();
+}
+
+function fixAndFillStokBatchNames() {
   try {
     var ss = SpreadsheetApp.getActiveSpreadsheet();
     var pSheet = ss.getSheetByName("DatabaseProduk");
     var bSheet = ss.getSheetByName("StokBatch");
-    if (!pSheet || !bSheet) return;
+    if (!pSheet || !bSheet) return "Sheet DatabaseProduk atau StokBatch tidak ditemukan";
     
+    // 1. Pastikan Header StokBatch memiliki kolom Nama_Camilan
+    var bRange = bSheet.getDataRange();
+    var bData = bRange.getDisplayValues();
+    if (bData.length < 1) return "Sheet StokBatch kosong";
+    
+    var bHeaders = bData[0];
+    var bNmCol = bHeaders.indexOf("Nama_Camilan");
+    
+    if (bNmCol === -1) {
+      bSheet.insertColumnAfter(2); // Sisipkan di kolom C (kolom 3)
+      bSheet.getRange(1, 3).setValue("Nama_Camilan");
+      // Re-fetch data setelah menyisipkan kolom
+      bData = bSheet.getDataRange().getDisplayValues();
+      bHeaders = bData[0];
+      bNmCol = bHeaders.indexOf("Nama_Camilan");
+    }
+    
+    var bBcCol = bHeaders.indexOf("Barcode_ID"); if (bBcCol === -1) bBcCol = 1;
+    
+    // 2. Ambil data dari DatabaseProduk
     var pData = pSheet.getDataRange().getDisplayValues();
-    var bData = bSheet.getDataRange().getDisplayValues();
-    if (pData.length < 2 || bData.length < 2) return;
+    if (pData.length < 2) return "DatabaseProduk belum memiliki data produk";
     
-    var pBcCol = pData[0].indexOf("Barcode_ID"); if (pBcCol === -1) pBcCol = 0;
-    var pNmCol = pData[0].indexOf("Nama_Camilan"); if (pNmCol === -1) pNmCol = 1;
+    var pHeaders = pData[0];
+    var pBcCol = pHeaders.indexOf("Barcode_ID"); if (pBcCol === -1) pBcCol = 0;
+    var pNmCol = pHeaders.indexOf("Nama_Camilan"); if (pNmCol === -1) pNmCol = 1;
     
-    var productMapByBarcode = {};
-    var productMapByName = {};
+    // Build lookup maps
+    var mapByBc = {};
+    var mapByNm = {};
     
     for (var i = 1; i < pData.length; i++) {
       var bc = pData[i][pBcCol] ? pData[i][pBcCol].toString().trim() : "";
       var nm = pData[i][pNmCol] ? pData[i][pNmCol].toString().trim() : "";
-      if (bc !== "" && nm !== "") productMapByBarcode[bc] = nm;
-      if (nm !== "") productMapByName[nm] = nm;
+      if (bc !== "") mapByBc[bc] = nm;
+      if (nm !== "") mapByNm[nm] = nm;
     }
     
-    var bHeaders = bData[0];
-    var bBcCol = bHeaders.indexOf("Barcode_ID");
-    var bNmCol = bHeaders.indexOf("Nama_Camilan");
-    
-    if (bNmCol === -1) return;
-    
+    // 3. Isi Nama_Camilan di StokBatch
+    var updatedCount = 0;
     for (var j = 1; j < bData.length; j++) {
-      var currentBc = bBcCol > -1 ? bData[j][bBcCol].toString().trim() : "";
-      var currentNm = bData[j][bNmCol] ? bData[j][bNmCol].toString().trim() : "";
+      var rowBc = bBcCol > -1 ? bData[j][bBcCol].toString().trim() : "";
+      var rowNm = bNmCol > -1 ? bData[j][bNmCol].toString().trim() : "";
       
-      var correctName = "";
-      if (currentBc !== "" && productMapByBarcode[currentBc]) {
-        correctName = productMapByBarcode[currentBc];
-      } else if (currentNm !== "" && productMapByName[currentNm]) {
-        correctName = productMapByName[currentNm];
-      } else if (currentBc !== "" && productMapByName[currentBc]) {
-        correctName = productMapByName[currentBc];
+      var targetName = "";
+      if (rowBc !== "" && mapByBc[rowBc]) {
+        targetName = mapByBc[rowBc];
+      } else if (rowBc !== "" && mapByNm[rowBc]) {
+        targetName = mapByNm[rowBc];
+      } else if (rowNm !== "" && mapByNm[rowNm]) {
+        targetName = mapByNm[rowNm];
       }
       
-      if (correctName !== "" && currentNm !== correctName) {
-        bSheet.getRange(j + 1, bNmCol + 1).setValue(correctName);
+      if (targetName !== "") {
+        bSheet.getRange(j + 1, bNmCol + 1).setValue(targetName);
+        updatedCount++;
       }
     }
+    
+    return "Berhasil memperbarui " + updatedCount + " baris Nama_Camilan di sheet StokBatch";
   } catch (err) {
-    console.error("Gagal syncStokBatchProductNames:", err);
+    console.error("Gagal fixAndFillStokBatchNames:", err);
+    return "Error: " + err.toString();
   }
 }
 
