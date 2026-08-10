@@ -579,15 +579,26 @@ function saveProduct(product) {
       pSheet.getRange(prodRow, pModalCol + 1).setValue(product.Harga_Beli || product.Harga_Modal || 0);
     }
     
-    // Jika barcode diubah, update Barcode_ID di StokBatch
-    if (product.oldBarcode && product.oldBarcode.toString().trim() !== "" && product.oldBarcode.toString() !== product.Barcode_ID.toString()) {
-      var bData = bSheet.getDataRange().getDisplayValues();
-      var bBarcodeCol = bData[0].indexOf("Barcode_ID");
-      if (bBarcodeCol > -1) {
-        for (var j = 1; j < bData.length; j++) {
-          if (bData[j][bBarcodeCol].toString().trim() === product.oldBarcode.toString().trim()) {
-            bSheet.getRange(j + 1, bBarcodeCol + 1).setValue(product.Barcode_ID || product.Nama_Camilan);
-          }
+    // Update Barcode_ID & Nama_Camilan di seluruh baris batch di StokBatch agar selalu tersinkron presisi
+    var bData = bSheet.getDataRange().getDisplayValues();
+    var bHeaders = bData[0];
+    var bBarcodeCol = bHeaders.indexOf("Barcode_ID");
+    var bNameCol = bHeaders.indexOf("Nama_Camilan");
+    
+    if (bBarcodeCol > -1 || bNameCol > -1) {
+      var oldBc = (product.oldBarcode && product.oldBarcode.toString().trim() !== "") ? product.oldBarcode.toString().trim() : (product.Barcode_ID ? product.Barcode_ID.toString().trim() : "");
+      for (var j = 1; j < bData.length; j++) {
+        var rowBc = bBarcodeCol > -1 ? bData[j][bBarcodeCol].toString().trim() : "";
+        var rowNm = bNameCol > -1 ? bData[j][bNameCol].toString().trim() : "";
+        
+        var isMatch = false;
+        if (oldBc !== "" && rowBc === oldBc) isMatch = true;
+        if (product.Barcode_ID && rowBc === product.Barcode_ID.toString().trim()) isMatch = true;
+        if (product.Nama_Camilan && rowNm === product.Nama_Camilan.toString().trim()) isMatch = true;
+        
+        if (isMatch) {
+          if (bBarcodeCol > -1) bSheet.getRange(j + 1, bBarcodeCol + 1).setValue(product.Barcode_ID || "");
+          if (bNameCol > -1) bSheet.getRange(j + 1, bNameCol + 1).setValue(product.Nama_Camilan || "");
         }
       }
     }
