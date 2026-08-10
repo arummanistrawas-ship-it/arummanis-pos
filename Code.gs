@@ -228,43 +228,46 @@ function processTransaction(transaction) {
   var bSisaCol = bHeaders.indexOf("Stok_Sisa");
   var bStatusCol = bHeaders.indexOf("Status");
   
-  // Lakukan FIFO untuk setiap item yang dibeli
-  transaction.items.forEach(item => {
-    var qtyToDeduct = parseInt(item.qty);
+  var totalHPP = 0;
+
+  // Lakukan FIFO untuk setiap item yang dibeli & hitung HPP aktual
+  transaction.items.forEach(function(item) {
+    var qtyToDeduct = parseInt(item.qty) || 0;
+    if (qtyToDeduct <= 0) return;
     var matchingBatches = [];
     
-    // Tentukan identifier: barcode jika ada, fallback ke Nama_Camilan
     var itemBarcode = item.Barcode_ID ? item.Barcode_ID.toString().trim() : "";
     var itemName = item.Nama_Camilan ? item.Nama_Camilan.toString().trim() : "";
     
     // 1. Kumpulkan semua batch produk yang masih memiliki stok
     for (var i = 1; i < bData.length; i++) {
-      var batchIdentifier = bData[i][bBarcodeCol].toString().trim();
-      // Match by barcode jika ada, atau by nama produk jika barcode kosong
+      var batchIdentifier = bBarcodeCol > -1 ? bData[i][bBarcodeCol].toString().trim() : "";
+      var batchName = bNameCol > -1 ? bData[i][bNameCol].toString().trim() : "";
       var isMatch = false;
       if (itemBarcode !== "") {
-        isMatch = (batchIdentifier === itemBarcode);
+        isMatch = (batchIdentifier === itemBarcode || batchName === itemBarcode);
       } else if (itemName !== "") {
-        isMatch = (batchIdentifier === itemName);
+        isMatch = (batchName === itemName || batchIdentifier === itemName);
       }
       
       if (isMatch) {
         var sisa = parseInt(bData[i][bSisaCol]) || 0;
         if (sisa > 0) {
           matchingBatches.push({
-            rowIndex: i + 1, // 1-indexed row in Sheet
+            rowIndex: i + 1,
             batchId: bData[i][bIdCol],
             expiredDate: parseDate(bData[i][bExpCol]),
-            stokSisa: sisa
+            stokSisa: sisa,
+            hargaBeli: bBuyCol > -1 ? (parseFloat(bData[i][bBuyCol]) || 0) : 0
           });
         }
       }
     }
     
-    // 2. Urutkan berdasarkan Tanggal Expired (FIFO) - terdekat ke terjauh
-    matchingBatches.sort((a, b) => a.expiredDate - b.expiredDate);
+    // 2. Urutkan berdasarkan Tanggal Expired (FIFO)
+    matchingBatches.sort(function(a, b) { return a.expiredDate - b.expiredDate; });
     
-    // 3. Potong stok dari batch secara berurutan
+    // 3. Potong stok dari batch secara berurutan & akumulasi HPP aktual dari batch
     for (var k = 0; k < matchingBatches.length; k++) {
       if (qtyToDeduct <= 0) break;
       
@@ -273,23 +276,43 @@ function processTransaction(transaction) {
       var newSisa = batch.stokSisa - deductAmount;
       qtyToDeduct -= deductAmount;
       
-      // Update sisa stok di Google Sheet
+      totalHPP += deductAmount * batch.hargaBeli;
+      
       bSheet.getRange(batch.rowIndex, bSisaCol + 1).setValue(newSisa);
       bSheet.getRange(batch.rowIndex, bStatusCol + 1).setValue(newSisa === 0 ? "Habis" : "Ready");
+    }
+    
+    // 4. Jika masih ada sisa qty (stok habis/minus), gunakan modal dari DatabaseProduk
+    if (qtyToDeduct > 0) {
+      var pModal = 0;
+      var pSheet = ss.getSheetByName("DatabaseProduk");
+      if (pSheet) {
+        var pData = pSheet.getDataRange().getDisplayValues();
+        var pHeaders = pData[0];
+        var pBarcodeCol = pHeaders.indexOf("Barcode_ID"); if (pBarcodeCol === -1) pBarcodeCol = 0;
+        var pNameCol = pHeaders.indexOf("Nama_Camilan"); if (pNameCol === -1) pNameCol = 1;
+        var pModalCol = pHeaders.indexOf("Harga_Modal"); if (pModalCol === -1) pModalCol = pHeaders.indexOf("Harga_Beli");
+        
+        for (var pRow = 1; pRow < pData.length; pRow++) {
+          var pBc = pData[pRow][pBarcodeCol].toString().trim();
+          var pNm = pData[pRow][pNameCol].toString().trim();
+          if ((itemBarcode !== "" && pBc === itemBarcode) || (itemName !== "" && pNm === itemName)) {
+            pModal = pModalCol > -1 ? (parseFloat(pData[pRow][pModalCol]) || 0) : 0;
+            break;
+          }
+        }
+      }
+      totalHPP += qtyToDeduct * pModal;
     }
   });
 
   // Simpan detail transaksi ke database transaksi
-  var detailItems = transaction.items.map(i => i.Nama_Camilan + " (" + i.qty + "x" + i.editPrice + ")").join(" | ");
+  var detailItems = transaction.items.map(function(i) {
+    var bonusTag = i.isBonus ? ' [BONUS]' : '';
+    return i.Nama_Camilan + bonusTag + " (" + i.qty + "x" + (i.editPrice || 0) + ")";
+  }).join(" | ");
   
-  // Hitung HPP (Total Modal)
-  var totalHPP = 0;
-  transaction.items.forEach(function(item) {
-    var modalItem = parseFloat(item.Harga_Modal || item.Harga_Beli || item.Harga || 0);
-    totalHPP += modalItem * (parseInt(item.qty) || 0);
-  });
-  
-  // Hitung Laba Bersih
+  // Hitung Laba Bersih = Total Omset Ditargetkan - Total HPP (Modal)
   var netProfit = parseFloat(transaction.total) - totalHPP;
   
   tSheet.appendRow([

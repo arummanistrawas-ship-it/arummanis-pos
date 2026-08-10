@@ -1515,22 +1515,37 @@ const app = {
         const trxCount = transactions.length;
 
         transactions.forEach(trx => {
-            omset += (parseFloat(trx.total) || 0);
-            totalDiskon += (parseFloat(trx.discount) || 0);
+            const trxTotal = parseFloat(trx.total) || 0;
+            const trxDisc = parseFloat(trx.discount) || 0;
+            omset += trxTotal;
+            totalDiskon += trxDisc;
 
+            // Hitung total item
             if (trx.items && Array.isArray(trx.items)) {
                 trx.items.forEach(item => {
-                    const qty = parseInt(item.qty) || 0;
-                    const sellPrice = parseFloat(item.editPrice) || parseFloat(item.Harga) || 0;
-                    const costPrice = parseFloat(item.Harga_Beli) || parseFloat(item.Harga_Modal) || 0;
-                    totalItems += qty;
-                    laba += (sellPrice - costPrice) * qty;
+                    totalItems += (parseInt(item.qty) || 0);
                 });
             }
-        });
 
-        // Kurangi diskon dari laba
-        laba -= totalDiskon;
+            // Gunakan netProfit dari server jika tersedia (dari Google Sheets DatabaseTransaksi)
+            if (trx.netProfit !== undefined && trx.netProfit !== null && !isNaN(parseFloat(trx.netProfit))) {
+                laba += parseFloat(trx.netProfit);
+            } else if (trx.hpp !== undefined && trx.hpp !== null && !isNaN(parseFloat(trx.hpp))) {
+                laba += (trxTotal - parseFloat(trx.hpp));
+            } else {
+                // Fallback untuk transaksi lokal tanpa data HPP/netProfit server:
+                let trxHpp = 0;
+                if (trx.items && Array.isArray(trx.items)) {
+                    trx.items.forEach(item => {
+                        const qty = parseInt(item.qty) || 0;
+                        const p = findProduct(this.state.products, item.Barcode_ID, item.Nama_Camilan);
+                        const modal = p ? (parseFloat(p.Harga_Modal) || parseFloat(p.Harga_Beli) || 0) : (parseFloat(item.Harga_Beli) || parseFloat(item.Harga_Modal) || 0);
+                        trxHpp += modal * qty;
+                    });
+                }
+                laba += (trxTotal - trxHpp);
+            }
+        });
 
         const avg = trxCount > 0 ? omset / trxCount : 0;
 
@@ -1862,8 +1877,12 @@ const app = {
             trx.items.forEach(item => {
                 const name = item.Nama_Camilan || 'Unknown';
                 const qty = parseInt(item.qty) || 0;
-                const sellPrice = parseFloat(item.editPrice) || parseFloat(item.Harga) || 0;
-                const costPrice = parseFloat(item.Harga_Beli) || parseFloat(item.Harga_Modal) || 0;
+                const isBonus = !!item.isBonus;
+                const sellPrice = isBonus ? 0 : (parseFloat(item.editPrice) || parseFloat(item.Harga) || 0);
+                
+                const p = findProduct(this.state.products, item.Barcode_ID, item.Nama_Camilan);
+                const costPrice = p ? (parseFloat(p.Harga_Modal) || parseFloat(p.Harga_Beli) || 0) : (parseFloat(item.Harga_Beli) || parseFloat(item.Harga_Modal) || 0);
+                
                 const revenue = sellPrice * qty;
                 const profit = (sellPrice - costPrice) * qty;
 
