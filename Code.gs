@@ -105,61 +105,117 @@ function syncStokBatchProductNames() {
 function fixAndFillStokBatchNames() {
   try {
     var ss = SpreadsheetApp.getActiveSpreadsheet();
-    var pSheet = ss.getSheetByName("DatabaseProduk");
-    var bSheet = ss.getSheetByName("StokBatch");
-    if (!pSheet || !bSheet) return "Sheet DatabaseProduk atau StokBatch tidak ditemukan";
+    var pSheet = ss.getSheetByName("DatabaseProduk") || ss.getSheetByName("Database Produk");
+    var bSheet = ss.getSheetByName("StokBatch") || ss.getSheetByName("Stok Batch") || ss.getSheetByName("Stok_Batch");
     
-    // 1. Pastikan Header StokBatch memiliki kolom Nama_Camilan
-    var bRange = bSheet.getDataRange();
-    var bData = bRange.getDisplayValues();
-    if (bData.length < 1) return "Sheet StokBatch kosong";
-    
-    var bHeaders = bData[0];
-    var bNmCol = bHeaders.indexOf("Nama_Camilan");
-    
-    if (bNmCol === -1) {
-      bSheet.insertColumnAfter(2); // Sisipkan di kolom C (kolom 3)
-      bSheet.getRange(1, 3).setValue("Nama_Camilan");
-      // Re-fetch data setelah menyisipkan kolom
-      bData = bSheet.getDataRange().getDisplayValues();
-      bHeaders = bData[0];
-      bNmCol = bHeaders.indexOf("Nama_Camilan");
+    if (!pSheet) {
+      var err1 = "Error: Sheet DatabaseProduk tidak ditemukan!";
+      try { Browser.msgBox(err1); } catch(e){}
+      return err1;
+    }
+    if (!bSheet) {
+      var err2 = "Error: Sheet StokBatch tidak ditemukan!";
+      try { Browser.msgBox(err2); } catch(e){}
+      return err2;
     }
     
-    var bBcCol = bHeaders.indexOf("Barcode_ID"); if (bBcCol === -1) bBcCol = 1;
+    // 1. Pastikan Header StokBatch memiliki kolom Nama_Camilan
+    var bLastCol = bSheet.getLastColumn();
+    var bLastRow = bSheet.getLastRow();
+    if (bLastRow < 2) {
+      var err3 = "Info: Sheet StokBatch belum memiliki baris data!";
+      try { Browser.msgBox(err3); } catch(e){}
+      return err3;
+    }
+    
+    var bHeaders = bSheet.getRange(1, 1, 1, bLastCol).getDisplayValues()[0];
+    var bNmCol = -1;
+    for (var h = 0; h < bHeaders.length; h++) {
+      var hStr = bHeaders[h].toString().trim().toLowerCase();
+      if (hStr === "nama_camilan" || hStr === "nama camilan" || hStr === "nama produk" || hStr === "nama") {
+        bNmCol = h;
+        break;
+      }
+    }
+    
+    if (bNmCol === -1) {
+      // Sisipkan kolom Nama_Camilan di kolom 3 (C)
+      bSheet.insertColumnAfter(2);
+      bSheet.getRange(1, 3).setValue("Nama_Camilan");
+      SpreadsheetApp.flush();
+      bLastCol = bSheet.getLastColumn();
+      bHeaders = bSheet.getRange(1, 1, 1, bLastCol).getDisplayValues()[0];
+      bNmCol = 2; // Kolom C (0-indexed = 2)
+    }
+    
+    var bBcCol = -1;
+    for (var h = 0; h < bHeaders.length; h++) {
+      var hStr = bHeaders[h].toString().trim().toLowerCase();
+      if (hStr === "barcode_id" || hStr === "barcode" || hStr === "barcode id") {
+        bBcCol = h;
+        break;
+      }
+    }
+    if (bBcCol === -1) bBcCol = 1;
     
     // 2. Ambil data dari DatabaseProduk
-    var pData = pSheet.getDataRange().getDisplayValues();
-    if (pData.length < 2) return "DatabaseProduk belum memiliki data produk";
+    var pLastRow = pSheet.getLastRow();
+    var pLastCol = pSheet.getLastColumn();
+    if (pLastRow < 2) return "DatabaseProduk belum memiliki data produk";
     
+    var pData = pSheet.getRange(1, 1, pLastRow, pLastCol).getDisplayValues();
     var pHeaders = pData[0];
-    var pBcCol = pHeaders.indexOf("Barcode_ID"); if (pBcCol === -1) pBcCol = 0;
-    var pNmCol = pHeaders.indexOf("Nama_Camilan"); if (pNmCol === -1) pNmCol = 1;
     
-    // Build lookup maps
+    var pBcCol = -1, pNmCol = -1;
+    for (var ph = 0; ph < pHeaders.length; ph++) {
+      var pHeadLower = pHeaders[ph].toString().trim().toLowerCase();
+      if (pHeadLower === "barcode_id" || pHeadLower === "barcode") pBcCol = ph;
+      if (pHeadLower === "nama_camilan" || pHeadLower === "nama camilan" || pHeadLower === "nama produk") pNmCol = ph;
+    }
+    if (pBcCol === -1) pBcCol = 0;
+    if (pNmCol === -1) pNmCol = 1;
+    
+    // Build normalizer map
     var mapByBc = {};
     var mapByNm = {};
     
     for (var i = 1; i < pData.length; i++) {
-      var bc = pData[i][pBcCol] ? pData[i][pBcCol].toString().trim() : "";
-      var nm = pData[i][pNmCol] ? pData[i][pNmCol].toString().trim() : "";
-      if (bc !== "") mapByBc[bc] = nm;
-      if (nm !== "") mapByNm[nm] = nm;
+      var rawBc = pData[i][pBcCol] ? pData[i][pBcCol].toString().trim() : "";
+      var rawNm = pData[i][pNmCol] ? pData[i][pNmCol].toString().trim() : "";
+      
+      if (rawNm !== "") {
+        if (rawBc !== "") {
+          mapByBc[rawBc.toLowerCase()] = rawNm;
+          var numBc = parseFloat(rawBc);
+          if (!isNaN(numBc)) {
+            mapByBc[numBc.toString()] = rawNm;
+          }
+        }
+        mapByNm[rawNm.toLowerCase()] = rawNm;
+      }
     }
     
-    // 3. Isi Nama_Camilan di StokBatch
+    // 3. Ambil data StokBatch & Update
+    var bData = bSheet.getRange(1, 1, bLastRow, bLastCol).getDisplayValues();
     var updatedCount = 0;
+    
     for (var j = 1; j < bData.length; j++) {
-      var rowBc = bBcCol > -1 ? bData[j][bBcCol].toString().trim() : "";
-      var rowNm = bNmCol > -1 ? bData[j][bNmCol].toString().trim() : "";
+      var rawRowBc = bData[j][bBcCol] ? bData[j][bBcCol].toString().trim() : "";
+      var rawRowNm = bNmCol > -1 && bData[j][bNmCol] ? bData[j][bNmCol].toString().trim() : "";
       
       var targetName = "";
-      if (rowBc !== "" && mapByBc[rowBc]) {
-        targetName = mapByBc[rowBc];
-      } else if (rowBc !== "" && mapByNm[rowBc]) {
-        targetName = mapByNm[rowBc];
-      } else if (rowNm !== "" && mapByNm[rowNm]) {
-        targetName = mapByNm[rowNm];
+      
+      // Pencocokan 1: Lewat Barcode
+      if (rawRowBc !== "" && mapByBc[rawRowBc.toLowerCase()]) {
+        targetName = mapByBc[rawRowBc.toLowerCase()];
+      }
+      // Pencocokan 2: Lewat Barcode (jika kolom barcode berisi nama produk)
+      else if (rawRowBc !== "" && mapByNm[rawRowBc.toLowerCase()]) {
+        targetName = mapByNm[rawRowBc.toLowerCase()];
+      }
+      // Pencocokan 3: Lewat Nama yang ada
+      else if (rawRowNm !== "" && mapByNm[rawRowNm.toLowerCase()]) {
+        targetName = mapByNm[rawRowNm.toLowerCase()];
       }
       
       if (targetName !== "") {
@@ -168,10 +224,16 @@ function fixAndFillStokBatchNames() {
       }
     }
     
-    return "Berhasil memperbarui " + updatedCount + " baris Nama_Camilan di sheet StokBatch";
+    SpreadsheetApp.flush();
+    var msg = "BERHASIL! Menyuplai " + updatedCount + " baris Nama_Camilan di sheet StokBatch.";
+    Logger.log(msg);
+    try { Browser.msgBox(msg); } catch(e){}
+    return msg;
   } catch (err) {
     console.error("Gagal fixAndFillStokBatchNames:", err);
-    return "Error: " + err.toString();
+    var errMsg = "Error: " + err.toString();
+    try { Browser.msgBox(errMsg); } catch(e){}
+    return errMsg;
   }
 }
 
