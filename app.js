@@ -1501,13 +1501,34 @@ const app = {
                 to: document.getElementById('reportDateTo').value
             };
         } else if (period === 'yearly') {
-            return new Date(parseInt(dateInput.value), 0, 1);
-        } else if (period === 'monthly') {
-            const parts = dateInput.value.split('-');
-            return new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, 1);
-        } else {
+                    } else {
             return new Date(dateInput.value);
         }
+    },
+
+    getProductCostPrice: function(item) {
+        const p = findProduct(this.state.products, item.Barcode_ID, item.Nama_Camilan);
+        let costPrice = 0;
+        
+        if (p) {
+            // 1. Cek Harga_Modal atau Harga_Beli di objek produk
+            costPrice = parseFloat(p.Harga_Modal) || parseFloat(p.Harga_Beli) || 0;
+            
+            // 2. Jika 0, cek dari rincian batch produk di StokBatch
+            if (costPrice === 0 && p.batches && Array.isArray(p.batches) && p.batches.length > 0) {
+                const validBatch = p.batches.find(b => parseFloat(b.hargaBeli) > 0);
+                if (validBatch) {
+                    costPrice = parseFloat(validBatch.hargaBeli);
+                }
+            }
+        }
+        
+        // 3. Jika masih 0, cek dari item transaksi langsung
+        if (costPrice === 0) {
+            costPrice = parseFloat(item.Harga_Beli) || parseFloat(item.Harga_Modal) || 0;
+        }
+        
+        return costPrice;
     },
 
     calculateMetrics: function(transactions) {
@@ -1538,9 +1559,8 @@ const app = {
                 if (trx.items && Array.isArray(trx.items)) {
                     trx.items.forEach(item => {
                         const qty = parseInt(item.qty) || 0;
-                        const p = findProduct(this.state.products, item.Barcode_ID, item.Nama_Camilan);
-                        const modal = p ? (parseFloat(p.Harga_Modal) || parseFloat(p.Harga_Beli) || 0) : (parseFloat(item.Harga_Beli) || parseFloat(item.Harga_Modal) || 0);
-                        trxHpp += modal * qty;
+                        const costPrice = this.getProductCostPrice(item);
+                        trxHpp += costPrice * qty;
                     });
                 }
                 laba += (trxTotal - trxHpp);
@@ -1563,10 +1583,10 @@ const app = {
         if (previous === 0 && current === 0) return { pct: 0, dir: 'neutral' };
         if (previous === 0) return { pct: 100, dir: 'up' };
         const pct = ((current - previous) / Math.abs(previous)) * 100;
-        return {
-            pct: Math.abs(Math.round(pct)),
-            dir: pct > 0 ? 'up' : pct < 0 ? 'down' : 'neutral'
-        };
+        const rounded = Math.round(pct * 10) / 10;
+        if (rounded > 0) return { pct: rounded, dir: 'up' };
+        if (rounded < 0) return { pct: Math.abs(rounded), dir: 'down' };
+        return { pct: 0, dir: 'neutral' };
     },
 
     renderTrendBadge: function(elementId, trend) {
@@ -1637,6 +1657,56 @@ const app = {
 
         // Render product ranking
         this.renderProductRankTable(filtered, this._reportState.currentRankTab);
+    },
+
+    getTopProducts: function(transactions, sortBy) {
+        const productMap = {};
+
+        transactions.forEach(trx => {
+            if (!trx.items || !Array.isArray(trx.items)) return;
+            trx.items.forEach(item => {
+                const name = item.Nama_Camilan || 'Unknown';
+                const qty = parseInt(item.qty) || 0;
+                if (qty <= 0) return;
+
+                const isBonus = !!item.isBonus;
+                const sellPrice = isBonus ? 0 : (parseFloat(item.editPrice) || parseFloat(item.Harga) || 0);
+                const costPrice = this.getProductCostPrice(item);
+                
+                const revenue = sellPrice * qty;
+                const profit = (sellPrice - costPrice) * qty;
+
+                if (!productMap[name]) {
+                    productMap[name] = { name, totalQty: 0, totalRevenue: 0, totalProfit: 0 };
+                }
+                productMap[name].totalQty += qty;
+                productMap[name].totalRevenue += revenue;
+                productMap[name].totalProfit += profit;
+            });
+        });
+
+        const products = Object.values(productMap);
+
+        if (sortBy === 'terlaris') {
+            products.sort((a, b) => b.totalQty - a.totalQty);
+        } else {
+            products.sort((a, b) => b.totalProfit - a.totalProfit);
+        }
+
+        return products.slice(0, 10);
+    },
+
+    switchProductRankTab: function(tab) {
+        this._reportState.currentRankTab = tab;
+        const tabs = document.querySelectorAll('#productRankTabs .report-tab-btn');
+        tabs.forEach(t => t.classList.remove('active'));
+        if (tab === 'terlaris') {
+            tabs[0].classList.add('active');
+        } else {
+            tabs[1].classList.add('active');
+        }
+        const trxs = this._reportState.cachedTransactions || this.getFilteredTransactions(this._reportState.period, this.getRefDateFromInputs());
+        this.renderProductRankTable(trxs, tab);
     },
 
     renderSalesChart: function(transactions, period, refDate) {
@@ -1869,43 +1939,6 @@ const app = {
         });
     },
 
-    getTopProducts: function(transactions, sortBy) {
-        const productMap = {};
-
-        transactions.forEach(trx => {
-            if (!trx.items || !Array.isArray(trx.items)) return;
-            trx.items.forEach(item => {
-                const name = item.Nama_Camilan || 'Unknown';
-                const qty = parseInt(item.qty) || 0;
-                const isBonus = !!item.isBonus;
-                const sellPrice = isBonus ? 0 : (parseFloat(item.editPrice) || parseFloat(item.Harga) || 0);
-                
-                const p = findProduct(this.state.products, item.Barcode_ID, item.Nama_Camilan);
-                const costPrice = p ? (parseFloat(p.Harga_Modal) || parseFloat(p.Harga_Beli) || 0) : (parseFloat(item.Harga_Beli) || parseFloat(item.Harga_Modal) || 0);
-                
-                const revenue = sellPrice * qty;
-                const profit = (sellPrice - costPrice) * qty;
-
-                if (!productMap[name]) {
-                    productMap[name] = { name, totalQty: 0, totalRevenue: 0, totalProfit: 0 };
-                }
-                productMap[name].totalQty += qty;
-                productMap[name].totalRevenue += revenue;
-                productMap[name].totalProfit += profit;
-            });
-        });
-
-        const products = Object.values(productMap);
-
-        if (sortBy === 'terlaris') {
-            products.sort((a, b) => b.totalQty - a.totalQty);
-        } else {
-            products.sort((a, b) => b.totalProfit - a.totalProfit);
-        }
-
-        return products.slice(0, 10);
-    },
-
     switchProductRankTab: function(tab) {
         this._reportState.currentRankTab = tab;
         const tabs = document.querySelectorAll('#productRankTabs .report-tab-btn');
@@ -1915,7 +1948,10 @@ const app = {
         } else {
             tabs[1].classList.add('active');
         }
-        this.renderProductRankTable(this._reportState.cachedTransactions, tab);
+        const trxs = (this._reportState.cachedTransactions && this._reportState.cachedTransactions.length > 0) 
+            ? this._reportState.cachedTransactions 
+            : this.getFilteredTransactions(this._reportState.period, this.getRefDateFromInputs());
+        this.renderProductRankTable(trxs, tab);
     },
 
     renderProductRankTable: function(transactions, sortBy) {
