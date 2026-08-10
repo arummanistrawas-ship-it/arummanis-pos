@@ -93,6 +93,61 @@ function initSheets() {
     sSheet = ss.insertSheet("Pengaturan");
     sSheet.appendRow(["Key", "Value"]);
   }
+  
+  // Otomatis sinkronkan Nama_Camilan pada sheet StokBatch dengan DatabaseProduk
+  syncStokBatchProductNames();
+}
+
+function syncStokBatchProductNames() {
+  try {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var pSheet = ss.getSheetByName("DatabaseProduk");
+    var bSheet = ss.getSheetByName("StokBatch");
+    if (!pSheet || !bSheet) return;
+    
+    var pData = pSheet.getDataRange().getDisplayValues();
+    var bData = bSheet.getDataRange().getDisplayValues();
+    if (pData.length < 2 || bData.length < 2) return;
+    
+    var pBcCol = pData[0].indexOf("Barcode_ID"); if (pBcCol === -1) pBcCol = 0;
+    var pNmCol = pData[0].indexOf("Nama_Camilan"); if (pNmCol === -1) pNmCol = 1;
+    
+    var productMapByBarcode = {};
+    var productMapByName = {};
+    
+    for (var i = 1; i < pData.length; i++) {
+      var bc = pData[i][pBcCol] ? pData[i][pBcCol].toString().trim() : "";
+      var nm = pData[i][pNmCol] ? pData[i][pNmCol].toString().trim() : "";
+      if (bc !== "" && nm !== "") productMapByBarcode[bc] = nm;
+      if (nm !== "") productMapByName[nm] = nm;
+    }
+    
+    var bHeaders = bData[0];
+    var bBcCol = bHeaders.indexOf("Barcode_ID");
+    var bNmCol = bHeaders.indexOf("Nama_Camilan");
+    
+    if (bNmCol === -1) return;
+    
+    for (var j = 1; j < bData.length; j++) {
+      var currentBc = bBcCol > -1 ? bData[j][bBcCol].toString().trim() : "";
+      var currentNm = bData[j][bNmCol] ? bData[j][bNmCol].toString().trim() : "";
+      
+      var correctName = "";
+      if (currentBc !== "" && productMapByBarcode[currentBc]) {
+        correctName = productMapByBarcode[currentBc];
+      } else if (currentNm !== "" && productMapByName[currentNm]) {
+        correctName = productMapByName[currentNm];
+      } else if (currentBc !== "" && productMapByName[currentBc]) {
+        correctName = productMapByName[currentBc];
+      }
+      
+      if (correctName !== "" && currentNm !== correctName) {
+        bSheet.getRange(j + 1, bNmCol + 1).setValue(correctName);
+      }
+    }
+  } catch (err) {
+    console.error("Gagal syncStokBatchProductNames:", err);
+  }
 }
 
 function getSettings() {
@@ -511,6 +566,7 @@ function saveProduct(product) {
     }
   }
   
+  syncStokBatchProductNames();
   return successResponse('Produk dan batch berhasil disimpan');
 }
 
@@ -703,6 +759,7 @@ function processRestock(data) {
   if (bStatusCol > -1) row[bStatusCol] = "Ready";
   
   bSheet.appendRow(row);
+  syncStokBatchProductNames();
   return successResponse('Restok berhasil disimpan ke StokBatch');
 }
 
