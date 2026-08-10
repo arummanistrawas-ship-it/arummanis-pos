@@ -9,6 +9,10 @@ function doGet(e) {
     return getSettings();
   }
   
+  if (action === 'get_transactions') {
+    return getTransactions();
+  }
+  
   return ContentService.createTextOutput(JSON.stringify({status: 'error', message: 'Action not found'}))
     .setMimeType(ContentService.MimeType.JSON);
 }
@@ -61,7 +65,14 @@ function initSheets() {
   var bSheet = ss.getSheetByName("StokBatch");
   if (!bSheet) {
     bSheet = ss.insertSheet("StokBatch");
-    bSheet.appendRow(["Batch_ID", "Barcode_ID", "Tanggal_Masuk", "Tanggal_Expired", "Stok_Awal", "Stok_Sisa", "Harga_Beli", "Status"]);
+    bSheet.appendRow(["Batch_ID", "Barcode_ID", "Nama_Camilan", "Tanggal_Masuk", "Tanggal_Expired", "Stok_Awal", "Stok_Sisa", "Harga_Beli", "Status"]);
+  } else {
+    // Pastikan kolom Nama_Camilan ada jika sheet sudah ada sebelumnya
+    var bHeaders = bSheet.getDataRange().getDisplayValues()[0];
+    if (bHeaders.indexOf("Nama_Camilan") === -1) {
+      bSheet.insertColumnAfter(2); // Sisipkan di kolom 3
+      bSheet.getRange(1, 3).setValue("Nama_Camilan");
+    }
   }
   
   var tSheet = ss.getSheetByName("DatabaseTransaksi");
@@ -430,17 +441,25 @@ function saveProduct(product) {
   var stokVal = parseInt(product.Stok) || 0;
   if (stokVal > 0) {
     var bData = bSheet.getDataRange().getDisplayValues();
-    var bBarcodeCol = bData[0].indexOf("Barcode_ID");
-    if (bBarcodeCol === -1) bBarcodeCol = 1;
+    var bHeaders = bData[0];
+    var bIdCol = bHeaders.indexOf("Batch_ID"); if (bIdCol === -1) bIdCol = 0;
+    var bBarcodeCol = bHeaders.indexOf("Barcode_ID"); if (bBarcodeCol === -1) bBarcodeCol = 1;
+    var bNameCol = bHeaders.indexOf("Nama_Camilan");
+    var bMasukCol = bHeaders.indexOf("Tanggal_Masuk");
+    var bExpCol = bHeaders.indexOf("Tanggal_Expired");
+    var bAwalCol = bHeaders.indexOf("Stok_Awal");
+    var bSisaCol = bHeaders.indexOf("Stok_Sisa");
+    var bBuyCol = bHeaders.indexOf("Harga_Beli");
+    var bStatusCol = bHeaders.indexOf("Status");
     
-    var batchIdentifier = (product.Barcode_ID && product.Barcode_ID.toString().trim() !== "") 
-      ? product.Barcode_ID.toString().trim() 
-      : (product.Nama_Camilan || "").toString().trim();
+    var barcode = product.Barcode_ID || '';
+    var name = product.Nama_Camilan || '';
       
     var hasBatch = false;
     for (var k = 1; k < bData.length; k++) {
-      var rowIdentifier = bData[k][bBarcodeCol].toString().trim();
-      if (rowIdentifier !== "" && (rowIdentifier === batchIdentifier || (product.Nama_Camilan && rowIdentifier === product.Nama_Camilan.toString().trim()))) {
+      var rowBarcode = bBarcodeCol > -1 ? bData[k][bBarcodeCol].toString().trim() : "";
+      var rowName = bNameCol > -1 ? bData[k][bNameCol].toString().trim() : "";
+      if ((barcode !== "" && rowBarcode === barcode) || (name !== "" && (rowName === name || rowBarcode === name))) {
         hasBatch = true;
         break;
       }
@@ -453,20 +472,116 @@ function saveProduct(product) {
       var tanggalExpired = product.Tanggal_Expired || formatDate(new Date(Date.now() + 365*24*60*60*1000));
       var hargaBeli = product.Harga_Beli || product.Harga_Modal || Math.floor(product.Harga * 0.8);
       
-      bSheet.appendRow([
-        batchId,
-        batchIdentifier,
-        tanggalMasuk,
-        tanggalExpired,
-        stokVal,
-        stokVal,
-        hargaBeli,
-        "Ready"
-      ]);
+      var maxCol = Math.max(bIdCol, bBarcodeCol, bNameCol > -1 ? bNameCol : 0, bMasukCol, bExpCol, bAwalCol, bSisaCol, bBuyCol, bStatusCol) + 1;
+      var newBatchRow = new Array(maxCol).fill("");
+      newBatchRow[bIdCol] = batchId;
+      newBatchRow[bBarcodeCol] = barcode;
+      if (bNameCol > -1) newBatchRow[bNameCol] = name;
+      if (bMasukCol > -1) newBatchRow[bMasukCol] = tanggalMasuk;
+      if (bExpCol > -1) newBatchRow[bExpCol] = tanggalExpired;
+      if (bAwalCol > -1) newBatchRow[bAwalCol] = stokVal;
+      if (bSisaCol > -1) newBatchRow[bSisaCol] = stokVal;
+      if (bBuyCol > -1) newBatchRow[bBuyCol] = hargaBeli;
+      if (bStatusCol > -1) newBatchRow[bStatusCol] = "Ready";
+      
+      bSheet.appendRow(newBatchRow);
     }
   }
   
   return successResponse('Produk dan batch berhasil disimpan');
+}
+
+function getTransactions() {
+  initSheets();
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var tSheet = ss.getSheetByName("DatabaseTransaksi");
+  if (!tSheet) return successResponse([]);
+  
+  var tData = tSheet.getDataRange().getDisplayValues();
+  if (tData.length < 2) return successResponse([]);
+  
+  var headers = tData[0];
+  var idCol = headers.indexOf("ID"); if (idCol === -1) idCol = 0;
+  var timeCol = headers.indexOf("Waktu"); if (timeCol === -1) timeCol = 1;
+  var custCol = headers.indexOf("Pelanggan"); if (custCol === -1) custCol = 2;
+  var detailCol = headers.indexOf("Item (Detail)"); if (detailCol === -1) detailCol = 3;
+  var subCol = headers.indexOf("Subtotal"); if (subCol === -1) subCol = 4;
+  var discCol = headers.indexOf("Diskon"); if (discCol === -1) discCol = 5;
+  var totalCol = headers.indexOf("Total"); if (totalCol === -1) totalCol = 6;
+  var methodCol = headers.indexOf("Metode"); if (methodCol === -1) methodCol = 7;
+  var cashCol = headers.indexOf("Tunai"); if (cashCol === -1) cashCol = headers.indexOf("Uang_Bayar"); if (cashCol === -1) cashCol = 8;
+  var changeCol = headers.indexOf("Kembalian"); if (changeCol === -1) changeCol = 9;
+  var statusCol = headers.indexOf("Status"); if (statusCol === -1) statusCol = 10;
+  var hppCol = headers.indexOf("HPP"); if (hppCol === -1) hppCol = 11;
+  var profitCol = headers.indexOf("Laba_Bersih"); if (profitCol === -1) profitCol = 12;
+  
+  var transactions = [];
+  for (var i = 1; i < tData.length; i++) {
+    var row = tData[i];
+    var id = row[idCol] ? row[idCol].toString().trim() : "";
+    if (!id) continue;
+    
+    var timestamp = row[timeCol] || "";
+    var customer = row[custCol] || "";
+    var detailText = row[detailCol] || "";
+    var subtotal = parseFloat(row[subCol]) || 0;
+    var discount = parseFloat(row[discCol]) || 0;
+    var total = parseFloat(row[totalCol]) || 0;
+    var method = row[methodCol] || "Tunai";
+    var cash = parseFloat(row[cashCol]) || 0;
+    var changeVal = parseFloat(row[changeCol]) || 0;
+    var status = row[statusCol] || "Lunas";
+    var hpp = hppCol > -1 ? (parseFloat(row[hppCol]) || 0) : 0;
+    var netProfit = profitCol > -1 ? (parseFloat(row[profitCol]) || 0) : 0;
+    
+    var items = [];
+    if (detailText) {
+      var itemParts = detailText.split(" | ");
+      itemParts.forEach(function(part) {
+        var match = part.match(/^(.+?)\s*\((?:(\d+)x([\d\.]+))\)$/);
+        if (match) {
+          var nameWithBonus = match[1].trim();
+          var isBonus = nameWithBonus.indexOf("[BONUS]") > -1;
+          var cleanName = nameWithBonus.replace(/\s*\[BONUS\]/g, "").trim();
+          var qty = parseInt(match[2]) || 1;
+          var price = parseFloat(match[3]) || 0;
+          items.push({
+            Nama_Camilan: cleanName,
+            qty: qty,
+            editPrice: price,
+            isBonus: isBonus
+          });
+        } else {
+          items.push({ Nama_Camilan: part, qty: 1, editPrice: 0 });
+        }
+      });
+    }
+    
+    var remainingDebt = 0;
+    if (status !== "Lunas") {
+      remainingDebt = Math.max(0, total - cash);
+    }
+    
+    transactions.push({
+      id: id,
+      timestamp: timestamp,
+      customer: customer,
+      detailItems: detailText,
+      items: items,
+      subtotal: subtotal,
+      discount: discount,
+      total: total,
+      method: method,
+      cash: cash,
+      change: changeVal,
+      remainingDebt: remainingDebt,
+      status: status,
+      hpp: hpp,
+      netProfit: netProfit
+    });
+  }
+  
+  return successResponse(transactions);
 }
 
 function deleteProduct(data) {
@@ -488,7 +603,6 @@ function deleteProduct(data) {
   // 2. Hapus seluruh batch yang bersangkutan dari StokBatch
   var bTable = bSheet.getDataRange().getDisplayValues();
   var bBarcodeCol = bTable[0].indexOf("Barcode_ID");
-  // Hapus dari bawah ke atas agar indeks baris tidak bergeser salah
   for (var j = bTable.length - 1; j >= 1; j--) {
     if (bTable[j][bBarcodeCol].toString() === data.Barcode_ID.toString()) {
       bSheet.deleteRow(j + 1);
@@ -500,17 +614,15 @@ function deleteProduct(data) {
 
 // --- Utilities Helper ---
 
-// Mengubah teks DD/MM/YYYY menjadi objek Date javascript
 function parseDate(dateStr) {
   if (dateStr instanceof Date) return dateStr;
   var parts = dateStr.toString().split("/");
   if (parts.length === 3) {
     return new Date(parts[2], parts[1] - 1, parts[0]);
   }
-  return new Date(dateStr); // fallback jika tipenya objek date default sheet
+  return new Date(dateStr);
 }
 
-// Format objek Date menjadi string DD/MM/YYYY
 function formatDate(date) {
   var d = new Date(date),
       month = '' + (d.getMonth() + 1),
@@ -537,23 +649,37 @@ function processRestock(data) {
   var bSheet = ss.getSheetByName("StokBatch");
   if (!bSheet) return errorResponse('Sheet "StokBatch" tidak ditemukan');
   
+  var bHeaders = bSheet.getDataRange().getDisplayValues()[0];
+  var bIdCol = bHeaders.indexOf("Batch_ID"); if (bIdCol === -1) bIdCol = 0;
+  var bBarcodeCol = bHeaders.indexOf("Barcode_ID"); if (bBarcodeCol === -1) bBarcodeCol = 1;
+  var bNameCol = bHeaders.indexOf("Nama_Camilan");
+  var bMasukCol = bHeaders.indexOf("Tanggal_Masuk");
+  var bExpCol = bHeaders.indexOf("Tanggal_Expired");
+  var bAwalCol = bHeaders.indexOf("Stok_Awal");
+  var bSisaCol = bHeaders.indexOf("Stok_Sisa");
+  var bBuyCol = bHeaders.indexOf("Harga_Beli");
+  var bStatusCol = bHeaders.indexOf("Status");
+  
   var batchId = "B-" + Date.now();
   var tanggalMasuk = formatDate(new Date());
-  // Default 1 tahun jika expired kosong
   var tanggalExpired = data.expired || formatDate(new Date(Date.now() + 365*24*60*60*1000));
   var hargaBeli = data.priceBuy || 0;
+  var barcode = data.Barcode_ID || '';
+  var name = data.Nama_Camilan || '';
   
-  bSheet.appendRow([
-    batchId,
-    data.Barcode_ID || data.Nama_Camilan || '',
-    tanggalMasuk,
-    tanggalExpired,
-    data.qty,
-    data.qty, // Stok_Sisa = Stok_Awal
-    hargaBeli,
-    "Ready"
-  ]);
+  var maxCol = Math.max(bIdCol, bBarcodeCol, bNameCol > -1 ? bNameCol : 0, bMasukCol, bExpCol, bAwalCol, bSisaCol, bBuyCol, bStatusCol) + 1;
+  var row = new Array(maxCol).fill("");
+  row[bIdCol] = batchId;
+  row[bBarcodeCol] = barcode;
+  if (bNameCol > -1) row[bNameCol] = name;
+  if (bMasukCol > -1) row[bMasukCol] = tanggalMasuk;
+  if (bExpCol > -1) row[bExpCol] = tanggalExpired;
+  if (bAwalCol > -1) row[bAwalCol] = data.qty;
+  if (bSisaCol > -1) row[bSisaCol] = data.qty;
+  if (bBuyCol > -1) row[bBuyCol] = hargaBeli;
+  if (bStatusCol > -1) row[bStatusCol] = "Ready";
   
+  bSheet.appendRow(row);
   return successResponse('Restok berhasil disimpan ke StokBatch');
 }
 
@@ -563,7 +689,6 @@ function saveSettings(data) {
   var sheet = ss.getSheetByName("Pengaturan");
   if (!sheet) return errorResponse('Sheet "Pengaturan" tidak ditemukan');
   
-  // Clear existing data (keep header)
   var lastRow = sheet.getLastRow();
   if (lastRow > 1) {
     sheet.getRange(2, 1, lastRow - 1, 2).clearContent();
@@ -573,7 +698,7 @@ function saveSettings(data) {
   var rows = [];
   for (var i = 0; i < keys.length; i++) {
     var key = keys[i];
-    if (key === 'shopLogo') continue; // Skip logo base64 gambar yang besar
+    if (key === 'shopLogo') continue;
     var value = data[key] !== undefined && data[key] !== null ? data[key].toString() : '';
     rows.push([key, value]);
   }
@@ -596,6 +721,7 @@ function updateBatch(data) {
   var bIdCol = headers.indexOf("Batch_ID");
   var bSisaCol = headers.indexOf("Stok_Sisa");
   var bStatusCol = headers.indexOf("Status");
+  var bBuyCol = headers.indexOf("Harga_Beli");
   
   if (bIdCol === -1 || bSisaCol === -1) return errorResponse('Kolom Batch_ID atau Stok_Sisa tidak ditemukan');
   
@@ -605,12 +731,16 @@ function updateBatch(data) {
   for (var b = 0; b < batches.length; b++) {
     var batchId = batches[b].batchId;
     var newStok = parseInt(batches[b].stokSisa) || 0;
+    var newBuy = batches[b].hargaBeli !== undefined ? (parseInt(batches[b].hargaBeli) || 0) : null;
     
     for (var i = 1; i < bData.length; i++) {
       if (bData[i][bIdCol] === batchId) {
         bSheet.getRange(i + 1, bSisaCol + 1).setValue(newStok);
         if (bStatusCol > -1) {
           bSheet.getRange(i + 1, bStatusCol + 1).setValue(newStok > 0 ? 'Ready' : 'Habis');
+        }
+        if (bBuyCol > -1 && newBuy !== null) {
+          bSheet.getRange(i + 1, bBuyCol + 1).setValue(newBuy);
         }
         updatedCount++;
         break;

@@ -258,6 +258,9 @@ const app = {
             // Selalu tarik profil usaha terbaru dari Google Sheets saat online
             await this.refreshSettingsFromServer();
             
+            // Selalu tarik daftar transaksi terbaru dari Google Sheets saat online (Sinkronisasi Multi-Device)
+            await this.refreshTransactionsFromServer();
+            
             // Sinkronisasi antrean offline yang tertunda setelah konek kembali
             this.syncData();
         }
@@ -495,6 +498,23 @@ const app = {
         }
     },
 
+    toggleCartBonus: function(identifier) {
+        const item = this.state.cart.find(x => 
+            (x.Barcode_ID && x.Barcode_ID.toString().trim() === identifier.toString().trim()) || 
+            (x.Nama_Camilan === identifier.toString())
+        );
+        if (item) {
+            item.isBonus = !item.isBonus;
+            if (item.isBonus) {
+                item.originalPrice = item.originalPrice !== undefined ? item.originalPrice : (item.editPrice || parseInt(item.Harga) || 0);
+                item.editPrice = 0;
+            } else {
+                item.editPrice = item.originalPrice !== undefined ? item.originalPrice : (parseInt(item.Harga) || 0);
+            }
+            this.updateCartUI();
+        }
+    },
+
     updateCartItem: function(identifier, field, value) {
         const item = this.state.cart.find(x => 
             (x.Barcode_ID && x.Barcode_ID.toString().trim() === identifier.toString().trim()) || 
@@ -675,20 +695,25 @@ const app = {
             document.getElementById('processCheckoutBtn').disabled = false;
             
             this.state.cart.forEach(item => {
-                subtotal += item.editPrice * item.qty;
+                subtotal += (item.editPrice || 0) * item.qty;
                 count += item.qty;
                 
                 const div = document.createElement('div');
                 div.className = 'cart-item';
                 const idKey = (item.Barcode_ID && item.Barcode_ID.toString().trim() !== "") ? item.Barcode_ID.toString().trim() : item.Nama_Camilan;
+                const isBonus = !!item.isBonus;
+                const priceDisplay = isBonus ? '<span style="background:#8b5cf6; color:white; padding:1px 6px; border-radius:4px; font-size:0.75rem; font-weight:700;">BONUS</span> Rp 0' : formatRupiah(item.editPrice * item.qty);
+                const bonusBtnStyle = isBonus ? 'background:#8b5cf6; color:white; border:none; border-radius:6px; padding:2px 8px; font-size:0.75rem; font-weight:700; cursor:pointer;' : 'background:#f1f5f9; color:#64748b; border:1px solid #cbd5e1; border-radius:6px; padding:2px 8px; font-size:0.75rem; font-weight:600; cursor:pointer;';
+
                 div.innerHTML = `
                     <div class="item-header">
-                        <span>${item.Nama_Camilan}</span>
-                        <span>${formatRupiah(item.editPrice * item.qty)}</span>
+                        <span>${item.Nama_Camilan} ${isBonus ? '<span style="color:#8b5cf6; font-weight:700; font-size:0.8rem;">[BONUS]</span>' : ''}</span>
+                        <span>${priceDisplay}</span>
                     </div>
                     <div class="item-editor">
-                        <label>Rp</label>
-                        <input type="number" value="${item.editPrice}" oninput="app.updateCartItemVal('${idKey}', 'price', this)" onblur="app.cleanCartItemInput('${idKey}', 'price', this)">
+                        <button style="${bonusBtnStyle}" onclick="app.toggleCartBonus('${idKey}')" title="Tandai sebagai item bonus gratis">${isBonus ? '★ Bonus' : '+ Bonus'}</button>
+                        <label style="margin-left:4px;">Rp</label>
+                        <input type="number" value="${item.editPrice}" ${isBonus ? 'disabled' : ''} oninput="app.updateCartItemVal('${idKey}', 'price', this)" onblur="app.cleanCartItemInput('${idKey}', 'price', this)" style="width:65px;">
                         <label>x</label>
                         <div class="qty-controls">
                             <button class="qty-btn" onclick="app.updateCartItem('${idKey}', 'qty', ${item.qty - 1})">-</button>
@@ -1192,9 +1217,13 @@ const app = {
         
         if (trx.items && trx.items.length > 0) {
             trx.items.forEach(i => {
+                const isBonus = !!i.isBonus;
+                const bonusBadge = isBonus ? ' <span style="background:#8b5cf6; color:white; padding:1px 5px; border-radius:4px; font-size:0.75rem; font-weight:bold;">[BONUS]</span>' : '';
+                const subTxt = isBonus ? `${i.qty} x Rp 0 (Bonus)` : `${i.qty} x ${formatRupiah(i.editPrice)}`;
+                const priceTxt = isBonus ? 'Rp 0' : formatRupiah(i.qty * i.editPrice);
                 html += `
-                    <div>${i.Nama_Camilan}</div>
-                    <div class="r-row"><span>${i.qty} x ${formatRupiah(i.editPrice)}</span> <span>${formatRupiah(i.qty * i.editPrice)}</span></div>
+                    <div>${i.Nama_Camilan}${bonusBadge}</div>
+                    <div class="r-row"><span>${subTxt}</span> <span>${priceTxt}</span></div>
                 `;
             });
         } else {
@@ -2079,15 +2108,21 @@ const app = {
                 const sortedBatches = [...p.batches].sort((a, b) => new Date(convertDateToPickerFormat(a.expiredDate)) - new Date(convertDateToPickerFormat(b.expiredDate)));
                 sortedBatches.forEach((b, idx) => {
                     batchesHtml += `
-                        <div style="background: #f8fafc; border: 1px solid #e2e8f0; padding: 10px; border-radius: 6px; font-size: 0.9rem;">
+                        <div style="background: #f8fafc; border: 1px solid #e2e8f0; padding: 10px; border-radius: 8px; font-size: 0.9rem; margin-bottom: 8px;">
                             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
                                 <strong style="color: var(--primary);">Batch ${idx + 1}</strong>
-                                <span style="font-size: 0.8rem; color: #64748b;">Modal: ${formatRupiah(b.hargaBeli)}</span>
+                                <span style="font-size: 0.8rem; color: #64748b;">Exp: ${b.expiredDate || '—'}</span>
                             </div>
-                            <div style="display: flex; gap: 8px; align-items: center;">
-                                <label style="font-size: 0.85rem; white-space: nowrap;">Stok:</label>
-                                <input type="number" class="input-sm batch-stok-input" data-batch-id="${b.batchId}" value="${b.stokSisa}" min="0" style="width: 70px; text-align: center;" onchange="app.recalcBatchTotal()">
-                                <span style="font-size: 0.8rem; color: #64748b;">pcs | Exp: ${b.expiredDate || '—'}</span>
+                            <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                                <div style="display: flex; align-items: center; gap: 4px;">
+                                    <label style="font-size: 0.85rem; white-space: nowrap;">Stok:</label>
+                                    <input type="number" class="input-sm batch-stok-input" data-batch-id="${b.batchId}" value="${b.stokSisa}" min="0" style="width: 65px; text-align: center;" onchange="app.recalcBatchTotal()">
+                                    <span style="font-size: 0.8rem; color: #64748b;">pcs</span>
+                                </div>
+                                <div style="display: flex; align-items: center; gap: 4px;">
+                                    <label style="font-size: 0.85rem; white-space: nowrap;">Modal: Rp</label>
+                                    <input type="number" class="input-sm batch-modal-input" data-batch-id="${b.batchId}" value="${b.hargaBeli || 0}" min="0" style="width: 85px; text-align: right;">
+                                </div>
                             </div>
                         </div>
                     `;
@@ -2342,9 +2377,11 @@ const app = {
                 }
             }
             
-            // Update stok batch jika ada input editable batch
+            // Update stok & modal batch jika ada input editable batch
             const batchInputs = document.querySelectorAll('.batch-stok-input');
+            const modalInputs = document.querySelectorAll('.batch-modal-input');
             let updatedBatches = oldProduct.batches ? [...oldProduct.batches] : [];
+            
             if (batchInputs.length > 0) {
                 let calcStock = 0;
                 batchInputs.forEach(inp => {
@@ -2357,6 +2394,17 @@ const app = {
                     calcStock += val;
                 });
                 stock = calcStock;
+            }
+
+            if (modalInputs.length > 0) {
+                modalInputs.forEach(inp => {
+                    const bId = inp.dataset.batchId;
+                    const val = Math.max(0, parseInt(inp.value) || 0);
+                    const bObj = updatedBatches.find(b => b.batchId === bId);
+                    if (bObj) {
+                        bObj.hargaBeli = val;
+                    }
+                });
             }
             
             // Pertahankan _sheetRow
@@ -2372,7 +2420,7 @@ const app = {
                 data: { ...product, oldBarcode: oldProduct.Barcode_ID || '' } 
             });
 
-            // Antrekan sync pembaruan batch ke StokBatch jika ada batch
+            // Antrekan sync pembaruan batch (stok & harga modal) ke StokBatch jika ada batch
             if (updatedBatches.length > 0) {
                 this.state.syncQueue.push({
                     type: 'update_batch',
@@ -2536,10 +2584,11 @@ const app = {
         }
         
         if (successCount > 0) {
-            document.getElementById('syncText').textContent = `${successCount} data tersinkronisasi! Memperbarui stok & profil...`;
-            // Refresh data produk dan pengaturan dari server agar sinkron dengan Google Sheets
+            document.getElementById('syncText').textContent = `${successCount} data tersinkronisasi! Memperbarui stok, profil & riwayat...`;
+            // Refresh data produk, pengaturan, dan transaksi dari server agar sinkron dengan Google Sheets
             await this.refreshProductsFromServer();
             await this.refreshSettingsFromServer();
+            await this.refreshTransactionsFromServer();
             setTimeout(() => this.checkOfflineQueue(), 2000);
         } else {
             this.checkOfflineQueue();
@@ -2589,6 +2638,49 @@ const app = {
             }
         } catch (e) {
             console.error('Gagal refresh produk dari server:', e);
+        }
+    },
+
+    refreshTransactionsFromServer: async function() {
+        if (!navigator.onLine || GAS_URL === 'YOUR_GOOGLE_APPS_SCRIPT_WEB_APP_URL') return;
+        try {
+            const response = await fetch(`${GAS_URL}?action=get_transactions`);
+            const resData = await response.json();
+            if (resData.status === 'success' && Array.isArray(resData.data)) {
+                const serverTrxs = resData.data;
+
+                // Dapatkan ID transaksi yang masih menggantung di syncQueue (belum terkirim)
+                const pendingTrxIds = new Set();
+                this.state.syncQueue.forEach(q => {
+                    if (q.type === 'transaction' && q.data && q.data.id) {
+                        pendingTrxIds.add(q.data.id);
+                    }
+                });
+
+                // Pertahankan transaksi lokal yang masih di antrean sync
+                const localPending = this.state.transactions.filter(t => pendingTrxIds.has(t.id));
+
+                // Gabungkan transaksi dari server dengan transaksi pending lokal (tanpa duplikat)
+                const mergedMap = new Map();
+                serverTrxs.forEach(t => mergedMap.set(t.id, t));
+                localPending.forEach(t => mergedMap.set(t.id, t));
+
+                // Urutkan dari terbaru ke terlama
+                const sorted = Array.from(mergedMap.values()).sort((a, b) => {
+                    return new Date(b.timestamp || 0) - new Date(a.timestamp || 0);
+                });
+
+                this.state.transactions = sorted;
+                this.saveData();
+
+                // Refresh tampilan laporan jika sedang di layar laporan
+                if (this.state.currentView === 'reports' && typeof this.renderReports === 'function') {
+                    this.renderReports();
+                }
+                console.log('Daftar transaksi tersinkronisasi dari server:', sorted.length);
+            }
+        } catch (e) {
+            console.error('Gagal refresh transaksi dari server:', e);
         }
     },
 
@@ -3293,9 +3385,11 @@ const app = {
             
             // Items list
             trx.items.forEach(i => {
-                bodyTxt += `   ${i.Nama_Camilan}\n`;
-                const left = `${i.qty} x ${formatRupiah(i.editPrice)}`;
-                const right = formatRupiah(i.qty * i.editPrice);
+                const isBonus = !!i.isBonus;
+                const nameText = isBonus ? `${i.Nama_Camilan} [BONUS]` : i.Nama_Camilan;
+                bodyTxt += `   ${nameText}\n`;
+                const left = isBonus ? `${i.qty} x Rp 0 (BONUS)` : `${i.qty} x ${formatRupiah(i.editPrice)}`;
+                const right = isBonus ? "Rp 0" : formatRupiah(i.qty * i.editPrice);
                 bodyTxt += "   " + makePrintRow(left, right, 28);
             });
             bodyTxt += "   ----------------------------\n";
