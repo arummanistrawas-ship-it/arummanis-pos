@@ -1,4 +1,4 @@
-const CACHE_NAME = 'arummanis-pos-v59';
+const CACHE_NAME = 'arummanis-pos-v60';
 const ASSETS_TO_CACHE = [
     './',
     './index.html',

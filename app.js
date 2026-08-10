@@ -291,39 +291,7 @@ const app = {
                 suggestionsBox.innerHTML = '';
                 return;
             }
-
-            // H1 Fix: String() to prevent crash when Barcode_ID is numeric
-            const matches = this.state.products.filter(p => 
-                (p.Barcode_ID && String(p.Barcode_ID).toLowerCase().includes(term)) || 
-                (p.Nama_Camilan && String(p.Nama_Camilan).toLowerCase().includes(term))
-            );
-
-            if (matches.length === 0) {
-                suggestionsBox.innerHTML = '<div class="suggestion-item" style="color: #999; cursor: default;">Produk tidak ditemukan</div>';
-                suggestionsBox.classList.remove('hidden');
-                return;
-            }
-
-            suggestionsBox.innerHTML = '';
-            matches.slice(0, 8).forEach(p => { // Batasi maksimal 8 saran untuk performa terbaik di HP
-                const item = document.createElement('div');
-                item.className = 'suggestion-item';
-                item.innerHTML = `
-                    <div>
-                        <div class="suggestion-name">${p.Nama_Camilan}</div>
-                        <div class="suggestion-meta">Barcode: ${p.Barcode_ID || '—'} (Stok: ${p.Stok})</div>
-                    </div>
-                    <div style="font-weight: 600; color: var(--primary); font-size: 0.95rem;">${formatRupiah(p.Harga)}</div>
-                `;
-                item.addEventListener('click', () => {
-                    this.addToCart(p);
-                    manualInput.value = '';
-                    suggestionsBox.classList.add('hidden');
-                    suggestionsBox.innerHTML = '';
-                });
-                suggestionsBox.appendChild(item);
-            });
-            suggestionsBox.classList.remove('hidden');
+            this.renderSearchSuggestions(term);
         });
 
         // Sembunyikan sugesti pencarian jika mengklik di luar area input / dropdown
@@ -336,7 +304,7 @@ const app = {
         // Munculkan kembali sugesti jika input mendapat fokus kembali dan tidak kosong
         manualInput.addEventListener('focus', () => {
             if (manualInput.value.trim()) {
-                manualInput.dispatchEvent(new Event('input'));
+                this.renderSearchSuggestions(manualInput.value.trim().toLowerCase());
             }
         });
 
@@ -506,6 +474,19 @@ const app = {
         }
         this.updateCartUI();
 
+        // Auto-scroll keranjang ke item terbaru di paling bawah
+        const cartContainer = document.getElementById('cartItems');
+        if (cartContainer) {
+            setTimeout(() => { cartContainer.scrollTop = cartContainer.scrollHeight; }, 50);
+        }
+
+        // Refresh dropdown saran produk agar stok terupdate tanpa menutup dropdown
+        const manualInput = document.getElementById('manualBarcode');
+        const currentTerm = manualInput ? manualInput.value.trim().toLowerCase() : '';
+        if (currentTerm) {
+            this.renderSearchSuggestions(currentTerm);
+        }
+
         const sisaSetelah = currentStok - qtyInCart - 1;
         if (sisaSetelah < 0) {
             Swal.fire({ toast: true, position: 'top-end', icon: 'info', title: `${product.Nama_Camilan} ditambahkan (Stok minus: ${sisaSetelah})`, showConfirmButton: false, timer: 2000 });
@@ -542,6 +523,74 @@ const app = {
             if(field === 'price') item.editPrice = parseInt(value) || 0;
             this.updateCartUI();
         }
+    },
+
+    // Render dropdown saran pencarian produk dengan tombol '+' (tetap terbuka setelah tambah item)
+    renderSearchSuggestions: function(term) {
+        const suggestionsBox = document.getElementById('searchSuggestions');
+        if (!term) {
+            suggestionsBox.classList.add('hidden');
+            suggestionsBox.innerHTML = '';
+            return;
+        }
+
+        const matches = this.state.products.filter(p => 
+            (p.Barcode_ID && String(p.Barcode_ID).toLowerCase().includes(term)) || 
+            (p.Nama_Camilan && String(p.Nama_Camilan).toLowerCase().includes(term))
+        );
+
+        if (matches.length === 0) {
+            suggestionsBox.innerHTML = '<div class="suggestion-item" style="color: #999; cursor: default;">Produk tidak ditemukan</div>';
+            suggestionsBox.classList.remove('hidden');
+            return;
+        }
+
+        // Simpan posisi scroll saat ini agar tidak loncat ke atas setelah re-render
+        const prevScroll = suggestionsBox.scrollTop;
+
+        suggestionsBox.innerHTML = '';
+        matches.slice(0, 15).forEach(p => {
+            // Hitung jumlah item ini yang sudah di keranjang
+            const inCart = this.state.cart.find(c => {
+                if (p.Barcode_ID && p.Barcode_ID.toString().trim() !== "") {
+                    return c.Barcode_ID && c.Barcode_ID.toString().trim() === p.Barcode_ID.toString().trim();
+                }
+                return c.Nama_Camilan === p.Nama_Camilan;
+            });
+            const qtyInCart = inCart ? inCart.qty : 0;
+            const currentStok = parseInt(p.Stok) || 0;
+            const sisaStok = currentStok - qtyInCart;
+
+            const item = document.createElement('div');
+            item.className = 'suggestion-item';
+            item.innerHTML = `
+                <div class="suggestion-info">
+                    <div class="suggestion-name">${p.Nama_Camilan}</div>
+                    <div class="suggestion-meta">${formatRupiah(p.Harga)} · Stok: ${sisaStok}${qtyInCart > 0 ? ` (${qtyInCart} di keranjang)` : ''}</div>
+                </div>
+                <button class="suggestion-add-btn" title="Tambah ke keranjang">+</button>
+            `;
+
+            // Klik tombol '+' untuk tambah ke keranjang (dropdown tetap terbuka)
+            const addBtn = item.querySelector('.suggestion-add-btn');
+            addBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.addToCart(p);
+            });
+
+            // Klik area info produk juga bisa menambahkan
+            const infoArea = item.querySelector('.suggestion-info');
+            infoArea.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.addToCart(p);
+            });
+
+            suggestionsBox.appendChild(item);
+        });
+        suggestionsBox.classList.remove('hidden');
+
+        // Restore posisi scroll
+        suggestionsBox.scrollTop = prevScroll;
     },
 
     updateCartItemVal: function(identifier, field, el) {

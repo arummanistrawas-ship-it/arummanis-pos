@@ -156,8 +156,11 @@ body { background: linear-gradient(135deg, #fdfbfb 0%, #ebedee 100%); color: var
     border: 1px solid #e2e8f0;
     border-radius: 10px;
     box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
-    max-height: 220px;
+    max-height: 55vh;
     overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+    touch-action: pan-y;
     z-index: 9999;
     margin-top: 6px;
     padding: 4px;
@@ -182,11 +185,43 @@ body { background: linear-gradient(135deg, #fdfbfb 0%, #ebedee 100%); color: var
     font-weight: 600;
     color: var(--dark);
     font-size: 0.95rem;
+    flex: 1;
+    min-width: 0;
 }
 .suggestion-meta {
     font-size: 0.8rem;
     color: #64748b;
     margin-top: 2px;
+}
+.suggestion-add-btn {
+    width: 36px;
+    height: 36px;
+    min-width: 36px;
+    border-radius: 50%;
+    border: none;
+    background: var(--primary);
+    color: white;
+    font-size: 1.1rem;
+    font-weight: 700;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform 0.15s ease, background 0.15s ease;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+    flex-shrink: 0;
+}
+.suggestion-add-btn:hover {
+    transform: scale(1.1);
+    background: var(--primary-hover, #e67e22);
+}
+.suggestion-add-btn:active {
+    transform: scale(0.95);
+}
+.suggestion-info {
+    flex: 1;
+    min-width: 0;
+    margin-right: 8px;
 }
 
 /* Quick Cash Container & Buttons */
