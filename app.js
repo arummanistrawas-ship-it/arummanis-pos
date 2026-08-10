@@ -208,12 +208,12 @@ const app = {
             if(viewId === 'pos') { titleEl.textContent = 'Transaksi Baru'; this.updateCartUI(); }
             if(viewId === 'checkout') titleEl.textContent = 'Pembayaran';
             if(viewId === 'receipt') { titleEl.textContent = 'Struk Transaksi'; backBtn.classList.add('hidden'); }
-            if(viewId === 'history') { titleEl.textContent = 'Histori Transaksi'; this.renderTransactionList('all', 'transactionListContainer', 'searchTransaction'); }
-            if(viewId === 'debt') { titleEl.textContent = 'Belum Lunas (Kasbon)'; this.renderTransactionList('Kasbon', 'debtListContainer', 'searchDebt'); }
+            if(viewId === 'history') { titleEl.textContent = 'Histori Transaksi'; this.renderTransactionList('all', 'transactionListContainer', 'searchTransaction'); this.refreshTransactionsFromServer(); }
+            if(viewId === 'debt') { titleEl.textContent = 'Belum Lunas (Kasbon)'; this.renderTransactionList('Kasbon', 'debtListContainer', 'searchDebt'); this.refreshTransactionsFromServer(); }
             if(viewId === 'products') { titleEl.textContent = 'Manajemen Produk'; this.renderProductList(); }
             if(viewId === 'settings') { titleEl.textContent = 'Pengaturan'; this.showSettingsForm(); }
             if(viewId === 'saved') { titleEl.textContent = 'Transaksi Tersimpan'; this.renderSavedTransactions(); }
-            if(viewId === 'reports') { titleEl.textContent = 'Laporan Keuangan'; this.initReports(); }
+            if(viewId === 'reports') { titleEl.textContent = 'Laporan Keuangan'; this.initReports(); this.refreshTransactionsFromServer(); }
         }
     },
 
@@ -2692,15 +2692,28 @@ const app = {
                 this.state.transactions = sorted;
                 this.saveData();
 
-                // Refresh tampilan laporan jika sedang di layar laporan
+                // Refresh tampilan aktif sesuai layar saat ini
                 if (this.state.currentView === 'reports' && typeof this.renderReports === 'function') {
                     this.renderReports();
+                } else if (this.state.currentView === 'history' && typeof this.renderTransactionList === 'function') {
+                    this.renderTransactionList('all', 'transactionListContainer', 'searchTransaction');
+                } else if (this.state.currentView === 'debt' && typeof this.renderTransactionList === 'function') {
+                    this.renderTransactionList('Kasbon', 'debtListContainer', 'searchDebt');
                 }
                 console.log('Daftar transaksi tersinkronisasi dari server:', sorted.length);
             }
         } catch (e) {
             console.error('Gagal refresh transaksi dari server:', e);
         }
+    },
+
+    refreshTransactionsFromServerWithToast: async function() {
+        if (!navigator.onLine) {
+            return Swal.fire('Offline', 'Koneksi internet tidak tersedia untuk menyinkronkan data dengan Google Sheets.', 'warning');
+        }
+        Swal.fire({ title: 'Menyingkronkan Data Sheet...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+        await this.refreshTransactionsFromServer();
+        Swal.fire({ icon: 'success', title: 'Data Tersinkronisasi', text: 'Riwayat transaksi & laporan berhasil disesuaikan dengan Google Sheets!', timer: 1500, showConfirmButton: false });
     },
 
     refreshSettingsFromServer: async function() {
