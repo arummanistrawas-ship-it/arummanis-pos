@@ -53,86 +53,49 @@
 
         <!-- Sync Banner -->
         <div id="syncBanner" class="sync-banner hidden" onclick="app.syncDataManual()" style="cursor: pointer;" title="Klik untuk sinkronisasi manual">
-            <span id="syncText">Menyinkronkan data...</span>
+            <i class="fas fa-cloud-upload-alt"></i>
+            <span id="syncText">0 antrean sync (Tap to Sync)</span>
         </div>
 
-        <!-- Views Container -->
-        <main class="content-area">
+        <main id="main-content">
+            
             <!-- 1. DASHBOARD -->
             <section id="view-dashboard" class="view active">
-                <div class="dashboard-header">
-                    <div class="dashboard-greeting">
-                        <div class="shop-brand">
-                            <span class="shop-icon"><i class="fas fa-store"></i></span>
-                            <span id="shopTitleText" class="shop-name">Kasir Manis</span>
-                        </div>
-                        <p class="tagline">Sistem Kasir &amp; Kontrol Stok FIFO</p>
+                <div class="dashboard-grid">
+                    <div class="dash-card" onclick="app.navigate('pos')">
+                        <i class="fas fa-cash-register"></i>
+                        <h3>Transaksi Baru</h3>
+                    </div>
+                    <div class="dash-card" onclick="app.navigate('debt')">
+                        <i class="fas fa-handshake"></i>
+                        <h3>Belum Lunas (Kasbon)</h3>
+                    </div>
+                    <div class="dash-card" onclick="app.navigate('history')">
+                        <i class="fas fa-history"></i>
+                        <h3>Histori Transaksi</h3>
+                    </div>
+                    <div class="dash-card" onclick="app.navigate('products')">
+                        <i class="fas fa-box-open"></i>
+                        <h3>Data Produk</h3>
+                    </div>
+                    <div class="dash-card" onclick="app.navigate('saved')">
+                        <i class="fas fa-pause-circle"></i>
+                        <h3>Transaksi Tersimpan</h3>
+                        <span id="savedBadge" class="badge-count hidden">0</span>
+                    </div>
+                    <div class="dash-card" onclick="app.navigate('reports')">
+                        <i class="fas fa-chart-line"></i>
+                        <h3>Laporan Keuangan</h3>
+                    </div>
+                    <div class="dash-card full-width" onclick="app.navigate('settings')">
+                        <i class="fas fa-cog"></i>
+                        <h3>Pengaturan</h3>
                     </div>
                 </div>
-
-                <div class="dashboard-grid">
-                    <div class="dash-card main-pos" onclick="app.navigate('pos')">
-                        <div class="dash-icon"><i class="fas fa-cash-register"></i></div>
-                        <div class="dash-info">
-                            <h3>Transaksi Baru</h3>
-                            <p>Kasir &amp; Penjualan Produk</p>
-                        </div>
-                        <i class="fas fa-chevron-right dash-arrow"></i>
-                    </div>
-
-                    <div class="dash-card" onclick="app.navigate('products')">
-                        <div class="dash-icon products"><i class="fas fa-boxes-stacked"></i></div>
-                        <div class="dash-info">
-                            <h3>Manajemen Produk</h3>
-                            <p>Kelola Stok &amp; Batch FIFO</p>
-                        </div>
-                        <i class="fas fa-chevron-right dash-arrow"></i>
-                    </div>
-
-                    <div class="dash-card" onclick="app.navigate('history')">
-                        <div class="dash-icon history"><i class="fas fa-clock-rotate-left"></i></div>
-                        <div class="dash-info">
-                            <h3>Histori Transaksi</h3>
-                            <p>Riwayat Penjualan Lunas</p>
-                        </div>
-                        <i class="fas fa-chevron-right dash-arrow"></i>
-                    </div>
-
-                    <div class="dash-card" onclick="app.navigate('debt')">
-                        <div class="dash-icon debt"><i class="fas fa-hand-holding-dollar"></i></div>
-                        <div class="dash-info">
-                            <h3>Belum Lunas (Kasbon)</h3>
-                            <p>Catatan Piutang Pelanggan</p>
-                        </div>
-                        <i class="fas fa-chevron-right dash-arrow"></i>
-                    </div>
-
-                    <div class="dash-card" onclick="app.navigate('reports')">
-                        <div class="dash-icon reports"><i class="fas fa-chart-line"></i></div>
-                        <div class="dash-info">
-                            <h3>Laporan Keuangan</h3>
-                            <p>Omset, Laba Bersih &amp; Tren</p>
-                        </div>
-                        <i class="fas fa-chevron-right dash-arrow"></i>
-                    </div>
-
-                    <div class="dash-card" onclick="app.navigate('saved')">
-                        <div class="dash-icon saved"><i class="fas fa-bookmark"></i></div>
-                        <div class="dash-info">
-                            <h3>Transaksi Tersimpan</h3>
-                            <p>Draft Pesanan Tertunda</p>
-                        </div>
-                        <i class="fas fa-chevron-right dash-arrow"></i>
-                    </div>
-
-                    <div class="dash-card" onclick="app.navigate('settings')">
-                        <div class="dash-icon settings"><i class="fas fa-gear"></i></div>
-                        <div class="dash-info">
-                            <h3>Pengaturan</h3>
-                            <p>Struk, Printer &amp; Profil Usaha</p>
-                        </div>
-                        <i class="fas fa-chevron-right dash-arrow"></i>
-                    </div>
+                <div class="version-info" style="text-align: center; color: #888; font-size: 0.8rem; margin-top: 2.5rem; padding: 10px; border-top: 1px dashed #eee;">
+                    <i class="fas fa-code-branch"></i> Versi: 9.0 — Multi-Device Sync & Stock Opname
+                    <br>
+                    <a href="?clear=1" style="color: #FF6B6B; text-decoration: underline; display: inline-block; margin-top: 5px;"><i class="fas fa-sync-alt"></i> Reset Aplikasi & Bersihkan Cache</a>
                 </div>
             </section>
 
@@ -141,14 +104,9 @@
                 <div class="card scanner-section">
                     <div class="section-header">
                         <h2><i class="fas fa-barcode"></i> Tambah Item</h2>
-                        <div style="display: flex; gap: 6px;">
-                            <button class="btn btn-secondary btn-sm" onclick="app.refreshProductsFromServerWithToast()" title="Tarik produk terbaru dari Google Sheets">
-                                <i class="fas fa-sync-alt"></i> Sync
-                            </button>
-                            <button id="toggleCameraBtn" class="btn btn-primary btn-sm">
-                                <i class="fas fa-camera"></i> <span id="cameraBtnText">Scan</span>
-                            </button>
-                        </div>
+                        <button id="toggleCameraBtn" class="btn btn-primary btn-sm">
+                            <i class="fas fa-camera"></i> <span id="cameraBtnText">Scan</span>
+                        </button>
                     </div>
                     <div id="reader" class="hidden"></div>
                     <div class="manual-input">
@@ -299,10 +257,9 @@
             <!-- 6. PRODUCT MANAGEMENT -->
             <section id="view-products" class="view hidden">
                 <div class="card">
-                    <div style="display: flex; gap: 8px; margin-bottom: 1rem; flex-wrap: wrap;">
-                        <button onclick="app.showProductForm()" class="btn btn-primary" style="flex: 1; min-width: 120px;"><i class="fas fa-plus"></i> Produk Baru</button>
-                        <button onclick="app.showRestockForm()" class="btn btn-warning" style="flex: 1; min-width: 120px;"><i class="fas fa-boxes"></i> Restok Barang</button>
-                        <button onclick="app.refreshProductsFromServerWithToast()" class="btn btn-secondary" style="flex: 1; min-width: 120px;" title="Tarik produk terbaru dari Google Sheets"><i class="fas fa-sync-alt"></i> Sync Sheet</button>
+                    <div style="display: flex; gap: 10px; margin-bottom: 1rem;">
+                        <button onclick="app.showProductForm()" class="btn btn-primary" style="flex: 1;"><i class="fas fa-plus"></i> Produk Baru</button>
+                        <button onclick="app.showRestockForm()" class="btn btn-warning" style="flex: 1;"><i class="fas fa-boxes"></i> Restok Barang</button>
                     </div>
                     <input type="text" id="searchProductInput" class="input-full mb-1" placeholder="Cari Produk...">
                     <div class="product-list" id="productManageList">
