@@ -52,6 +52,25 @@ function doPost(e) {
   }
 }
 
+// Menu otomatis saat Google Spreadsheet dibuka
+function onOpen() {
+  try {
+    var ui = SpreadsheetApp.getUi();
+    ui.createMenu('🏪 Kasir Arummanis')
+      .addItem('💰 Update Harga Modal dari Batch Terakhir', 'menuSyncMasterCosts')
+      .addItem('🔄 Sinkronkan Nama Produk di StokBatch', 'fixAndFillStokBatchNames')
+      .addItem('🛠️ Inisialisasi & Rapikan Semua Sheet', 'initSheets')
+      .addToUi();
+  } catch (e) {
+    Logger.log("onOpen error: " + e);
+  }
+}
+
+function menuSyncMasterCosts() {
+  var res = syncMasterProductCostsFromBatches();
+  try { Browser.msgBox(res); } catch(e){}
+}
+
 // Inisialisasi Sheet jika belum lengkap
 function initSheets() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
@@ -59,7 +78,13 @@ function initSheets() {
   var pSheet = ss.getSheetByName("DatabaseProduk");
   if (!pSheet) {
     pSheet = ss.insertSheet("DatabaseProduk");
-    pSheet.appendRow(["Barcode_ID", "Nama_Camilan", "Harga_Jual"]);
+    pSheet.appendRow(["Barcode_ID", "Nama_Camilan", "Harga_Jual", "Harga_Modal"]);
+  } else {
+    var pHeaders = pSheet.getDataRange().getDisplayValues()[0];
+    if (pHeaders.indexOf("Harga_Modal") === -1 && pHeaders.indexOf("Harga_Beli") === -1) {
+      var pLastCol = pSheet.getLastColumn();
+      pSheet.getRange(1, pLastCol + 1).setValue("Harga_Modal");
+    }
   }
   
   var bSheet = ss.getSheetByName("StokBatch");
@@ -96,10 +121,104 @@ function initSheets() {
   
   // Otomatis sinkronkan Nama_Camilan pada sheet StokBatch dengan DatabaseProduk
   syncStokBatchProductNames();
+  // Otomatis sinkronkan Harga_Modal pada DatabaseProduk dari batch terbaru
+  syncMasterProductCostsFromBatches();
 }
 
 function syncStokBatchProductNames() {
   return fixAndFillStokBatchNames();
+}
+
+// Fungsi Otomatis untuk Mengisi & Memperbarui Harga_Modal di DatabaseProduk dari Batch Kulakan Terakhir di StokBatch
+function syncMasterProductCostsFromBatches() {
+  try {
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var pSheet = ss.getSheetByName("DatabaseProduk") || ss.getSheetByName("Database Produk");
+    var bSheet = ss.getSheetByName("StokBatch") || ss.getSheetByName("Stok Batch") || ss.getSheetByName("Stok_Batch");
+    
+    if (!pSheet || !bSheet) return "Sheet DatabaseProduk atau StokBatch tidak ditemukan";
+    
+    var pLastRow = pSheet.getLastRow();
+    var pLastCol = pSheet.getLastColumn();
+    var bLastRow = bSheet.getLastRow();
+    var bLastCol = bSheet.getLastColumn();
+    
+    if (pLastRow < 2 || bLastRow < 2) return "Data produk atau batch masih kosong";
+    
+    var pData = pSheet.getRange(1, 1, pLastRow, pLastCol).getDisplayValues();
+    var bData = bSheet.getRange(1, 1, bLastRow, bLastCol).getDisplayValues();
+    
+    var pHeaders = pData[0];
+    var bHeaders = bData[0];
+    
+    // Temukan kolom di DatabaseProduk
+    var pBcCol = pHeaders.indexOf("Barcode_ID"); if (pBcCol === -1) pBcCol = pHeaders.indexOf("Barcode"); if (pBcCol === -1) pBcCol = 0;
+    var pNmCol = pHeaders.indexOf("Nama_Camilan"); if (pNmCol === -1) pNmCol = pHeaders.indexOf("Nama"); if (pNmCol === -1) pNmCol = 1;
+    var pModalCol = pHeaders.indexOf("Harga_Modal");
+    if (pModalCol === -1) pModalCol = pHeaders.indexOf("Harga_Beli");
+    if (pModalCol === -1) {
+      // Buat kolom Harga_Modal di ujung
+      pSheet.getRange(1, pLastCol + 1).setValue("Harga_Modal");
+      pModalCol = pLastCol;
+      pLastCol++;
+    }
+    
+    // Temukan kolom di StokBatch
+    var bBcCol = bHeaders.indexOf("Barcode_ID"); if (bBcCol === -1) bBcCol = bHeaders.indexOf("Barcode"); if (bBcCol === -1) bBcCol = 1;
+    var bNmCol = bHeaders.indexOf("Nama_Camilan"); if (bNmCol === -1) bNmCol = bHeaders.indexOf("Nama");
+    var bBuyCol = bHeaders.indexOf("Harga_Beli"); if (bBuyCol === -1) bBuyCol = bHeaders.indexOf("Harga_Modal");
+    
+    if (bBuyCol === -1) return "Kolom Harga_Beli di StokBatch tidak ditemukan";
+    
+    // Petakan harga beli batch TERAKHIR per barcode dan per nama produk (baris bawah menimpa baris atas = latest)
+    var latestCostByBc = {};
+    var latestCostByNm = {};
+    
+    for (var b = 1; b < bData.length; b++) {
+      var bBc = bBcCol > -1 && bData[b][bBcCol] ? bData[b][bBcCol].toString().trim() : "";
+      var bNm = bNmCol > -1 && bData[b][bNmCol] ? bData[b][bNmCol].toString().trim() : "";
+      var bBuy = parseFloat(bData[b][bBuyCol]) || 0;
+      
+      if (bBuy > 0) {
+        if (bBc !== "") {
+          latestCostByBc[bBc.toLowerCase()] = bBuy;
+          var numBc = parseFloat(bBc);
+          if (!isNaN(numBc)) latestCostByBc[numBc.toString()] = bBuy;
+        }
+        if (bNm !== "") {
+          latestCostByNm[bNm.toLowerCase()] = bBuy;
+        }
+      }
+    }
+    
+    // Update ke DatabaseProduk
+    var updatedCount = 0;
+    for (var p = 1; p < pData.length; p++) {
+      var pBc = pData[p][pBcCol] ? pData[p][pBcCol].toString().trim() : "";
+      var pNm = pData[p][pNmCol] ? pData[p][pNmCol].toString().trim() : "";
+      var currentModal = parseFloat(pData[p][pModalCol]) || 0;
+      
+      var targetModal = 0;
+      if (pBc !== "" && latestCostByBc[pBc.toLowerCase()]) {
+        targetModal = latestCostByBc[pBc.toLowerCase()];
+      } else if (pNm !== "" && latestCostByNm[pNm.toLowerCase()]) {
+        targetModal = latestCostByNm[pNm.toLowerCase()];
+      }
+      
+      if (targetModal > 0 && targetModal !== currentModal) {
+        pSheet.getRange(p + 1, pModalCol + 1).setValue(targetModal);
+        updatedCount++;
+      }
+    }
+    
+    SpreadsheetApp.flush();
+    var msg = "BERHASIL! Menyelaraskan " + updatedCount + " harga modal produk di DatabaseProduk dengan batch kulakan terakhir.";
+    Logger.log(msg);
+    return msg;
+  } catch (err) {
+    Logger.log("Error syncMasterProductCostsFromBatches: " + err);
+    return "Error: " + err.toString();
+  }
 }
 
 function fixAndFillStokBatchNames() {
@@ -892,6 +1011,7 @@ function processRestock(data) {
   
   bSheet.appendRow(row);
   syncStokBatchProductNames();
+  syncMasterProductCostsFromBatches();
   return successResponse('Restok berhasil disimpan ke StokBatch');
 }
 
@@ -960,6 +1080,7 @@ function updateBatch(data) {
     }
   }
   
+  syncMasterProductCostsFromBatches();
   return successResponse('Berhasil mengupdate ' + updatedCount + ' batch');
 }
 
