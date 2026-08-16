@@ -2723,6 +2723,7 @@ const app = {
         // Buat salinan queue untuk iterasi aman
         const queueCopy = [...this.state.syncQueue];
         let successCount = 0;
+        this.state.lastSyncErrors = [];
         
         for (let i = 0; i < queueCopy.length; i++) {
             const item = queueCopy[i];
@@ -2742,6 +2743,10 @@ const app = {
                     result = JSON.parse(responseText);
                 } catch(parseErr) {
                     console.error('Response bukan JSON:', responseText.substring(0, 200));
+                    this.state.lastSyncErrors.push({
+                        type: item.type,
+                        msg: 'Respon server bukan JSON (Periksa Web App URL)'
+                    });
                     continue;
                 }
                 
@@ -2753,9 +2758,17 @@ const app = {
                     this.saveData();
                 } else {
                     console.error('Sync gagal dari server:', result.message);
+                    this.state.lastSyncErrors.push({
+                        type: item.type,
+                        msg: result.message || 'Ditolak server'
+                    });
                 }
             } catch (error) {
                 console.error('Gagal sync (network):', error);
+                this.state.lastSyncErrors.push({
+                    type: item.type,
+                    msg: 'Koneksi terputus (Network error)'
+                });
                 break; // Berhenti di network failure pertama
             }
         }
@@ -3122,8 +3135,9 @@ const app = {
                         if (q.type === 'transaction' && q.data) desc += ` (ID: ${q.data.id || '—'})`;
                         if (q.type === 'product' && q.data) desc += ` (${q.data.Nama_Camilan || q.data.Barcode_ID || '—'})`;
                         if (q.type === 'restock' && q.data) desc += ` (${q.data.Nama_Camilan || q.data.Barcode_ID || '—'})`;
-                        return `${i+1}. ${desc}`;
-                    }).join('<br>');
+                        const err = this.state.lastSyncErrors && this.state.lastSyncErrors[i] ? `<br><small style="color:#dc2626;">↳ Respon Server: ${this.state.lastSyncErrors[i].msg}</small>` : '';
+                        return `${i+1}. <b>${desc}</b>${err}`;
+                    }).join('<br><br>');
 
                     Swal.fire({
                         title: 'Perhatian',
