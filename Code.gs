@@ -258,43 +258,63 @@ function getProducts() {
   var bSheet = ss.getSheetByName("StokBatch");
   
   var pData = pSheet.getDataRange().getDisplayValues();
-  var bData = bSheet.getDataRange().getDisplayValues();
+  var bData = bSheet ? bSheet.getDataRange().getDisplayValues() : [];
   
   if (pData.length < 2) return successResponse([]);
   
   var pHeaders = pData[0];
-  var bHeaders = bData[0];
+  var bHeaders = bData.length > 0 ? bData[0] : [];
   
-  // Ambil data batch detail per Barcode_ID atau Nama_Camilan dari tab StokBatch
+  // Ambil data batch detail per Barcode_ID DAN Nama_Camilan dari tab StokBatch
   var stokMap = {};
   var batchesMap = {}; // Map identifier (barcode atau nama) ke list batch aktif
   var bBarcodeCol = bHeaders.indexOf("Barcode_ID");
+  var bNameCol = bHeaders.indexOf("Nama_Camilan");
   var bSisaCol = bHeaders.indexOf("Stok_Sisa");
   var bExpCol = bHeaders.indexOf("Tanggal_Expired");
   var bBuyCol = bHeaders.indexOf("Harga_Beli");
   var bIdCol = bHeaders.indexOf("Batch_ID");
   
-  if (bData.length > 1 && bBarcodeCol > -1 && bSisaCol > -1) {
+  if (bData.length > 1 && bSisaCol > -1) {
     for (var i = 1; i < bData.length; i++) {
-      var batchIdentifier = bData[i][bBarcodeCol].toString().trim();
-      if (batchIdentifier === "") continue;
+      var batchBc = bBarcodeCol > -1 ? bData[i][bBarcodeCol].toString().trim() : "";
+      var batchNm = bNameCol > -1 ? bData[i][bNameCol].toString().trim() : "";
+      
+      // Jika kedua identifier kosong, abaikan
+      if (batchBc === "" && batchNm === "") continue;
+      
       var sisa = parseInt(bData[i][bSisaCol]) || 0;
-      if (sisa <= 0) continue; // Hanya ambil batch yang masih aktif memiliki stok
+      if (sisa <= 0) continue; // Hanya ambil batch yang masih aktif memiliki sisa stok
       
       var exp = bExpCol > -1 ? bData[i][bExpCol] : "";
       var buy = bBuyCol > -1 ? (parseInt(bData[i][bBuyCol]) || 0) : 0;
       var bid = bIdCol > -1 ? bData[i][bIdCol] : "";
       
-      if (!stokMap[batchIdentifier]) stokMap[batchIdentifier] = 0;
-      stokMap[batchIdentifier] += sisa;
-      
-      if (!batchesMap[batchIdentifier]) batchesMap[batchIdentifier] = [];
-      batchesMap[batchIdentifier].push({
+      var batchItem = {
         batchId: bid,
         stokSisa: sisa,
         expiredDate: exp,
         hargaBeli: buy
-      });
+      };
+      
+      // Petakan ke Barcode jika ada
+      if (batchBc !== "") {
+        if (!stokMap[batchBc]) stokMap[batchBc] = 0;
+        stokMap[batchBc] += sisa;
+        if (!batchesMap[batchBc]) batchesMap[batchBc] = [];
+        batchesMap[batchBc].push(batchItem);
+      }
+      
+      // Petakan juga ke Nama Camilan agar produk tanpa barcode atau pencarian nama tetap memiliki stok
+      if (batchNm !== "") {
+        if (!stokMap[batchNm]) stokMap[batchNm] = 0;
+        stokMap[batchNm] += sisa;
+        if (!batchesMap[batchNm]) batchesMap[batchNm] = [];
+        // Hindari duplikasi jika batchBc sudah sama persis dengan batchNm
+        if (batchBc === "" || batchBc !== batchNm) {
+          batchesMap[batchNm].push(batchItem);
+        }
+      }
     }
   }
   
@@ -308,10 +328,13 @@ function getProducts() {
   if (pPriceCol === -1) pPriceCol = 2;
   var pModalCol = pHeaders.indexOf("Harga_Modal");
   if (pModalCol === -1) pModalCol = pHeaders.indexOf("Harga_Beli");
+  var pStokCol = pHeaders.indexOf("Stok");
+  if (pStokCol === -1) pStokCol = pHeaders.indexOf("Stok_Awal");
+  if (pStokCol === -1) pStokCol = pHeaders.indexOf("Stock");
   
   for (var i = 1; i < pData.length; i++) {
     var barcode = pData[i][pBarcodeCol] ? pData[i][pBarcodeCol].toString().trim() : "";
-    var name = pData[i][pNameCol] || "";
+    var name = pData[i][pNameCol] ? pData[i][pNameCol].toString().trim() : "";
     if (!name && !barcode) continue; // Skip baris benar-benar kosong
     var price = parseFloat(pData[i][pPriceCol]) || 0;
     var modal = pModalCol > -1 ? (parseFloat(pData[i][pModalCol]) || 0) : 0;
@@ -325,6 +348,17 @@ function getProducts() {
     } else if (name && name !== "" && stokMap[name] !== undefined) {
       totalStok = stokMap[name];
       productBatches = batchesMap[name] || [];
+    } else if (pStokCol > -1) {
+      // Fallback jika produk diisi langsung di DatabaseProduk dengan kolom Stok
+      totalStok = parseInt(pData[i][pStokCol]) || 0;
+      if (totalStok > 0) {
+        productBatches = [{
+          batchId: "B-" + Date.now() + "-" + i,
+          stokSisa: totalStok,
+          expiredDate: "",
+          hargaBeli: modal
+        }];
+      }
     }
     
     products.push({

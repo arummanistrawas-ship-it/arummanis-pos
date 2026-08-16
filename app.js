@@ -70,13 +70,20 @@ const convertDateToSheetFormat = (dateStr) => {
     return dateStr;
 };
 
-// Helper pembanding barcode tahan crash tipe data (String/Number) dan Null/Undefined
+// Helper pembanding barcode tahan crash tipe data (String/Number/Scientific/Controls) dan Null/Undefined
 const compareBarcode = (a, b) => {
     if (a === null || a === undefined || b === null || b === undefined) return false;
-    const strA = a.toString().trim();
-    const strB = b.toString().trim();
+    const strA = a.toString().trim().replace(/[\r\n\t]/g, '').toLowerCase();
+    const strB = b.toString().trim().replace(/[\r\n\t]/g, '').toLowerCase();
     if (strA === "" || strB === "") return false;
-    return strA === strB;
+    if (strA === strB) return true;
+    
+    // Penanganan angka atau scientific notation (e.g. 8.99123E+12 vs 8991234567890)
+    const numA = parseFloat(strA);
+    const numB = parseFloat(strB);
+    if (!isNaN(numA) && !isNaN(numB) && numA === numB) return true;
+    
+    return false;
 };
 
 // Helper pencari produk yang mendukung pencocokan Barcode_ID maupun Nama_Camilan
@@ -87,7 +94,15 @@ const findProduct = (products, identifier, name) => {
         if (found) return found;
     }
     if (name && name.toString().trim() !== "") {
-        return products.find(x => x.Nama_Camilan === name.toString().trim());
+        const cleanName = name.toString().trim().toLowerCase();
+        const found = products.find(x => x.Nama_Camilan && x.Nama_Camilan.toString().trim().toLowerCase() === cleanName);
+        if (found) return found;
+    }
+    // Fallback: periksa jika identifier sebenarnya adalah nama produk
+    if (identifier && identifier.toString().trim() !== "") {
+        const cleanId = identifier.toString().trim().toLowerCase();
+        const found = products.find(x => x.Nama_Camilan && x.Nama_Camilan.toString().trim().toLowerCase() === cleanId);
+        if (found) return found;
     }
     return null;
 };
@@ -144,6 +159,15 @@ const app = {
                 isInitialLoad = false;
                 return;
             }
+
+            // Prioritas 1: Jika ada popup / modal / scanner yang sedang terbuka saat tombol Back HP ditekan, tutup modalnya
+            if (this.closeAnyOpenModal()) {
+                // Pastikan state URL tetap konsisten pada menu aktif saat ini
+                history.replaceState({ view: this.state.currentView }, '', '#' + this.state.currentView);
+                return;
+            }
+
+            // Prioritas 2: Navigasi mundur antar halaman
             if (event.state && event.state.view) {
                 this.navigate(event.state.view, false);
             } else {
@@ -165,6 +189,80 @@ const app = {
         }
     },
 
+    // Helper untuk menutup modal, dialog, scanner, atau popup form yang sedang aktif
+    closeAnyOpenModal: function() {
+        let closedSomething = false;
+
+        // 1. Tutup SweetAlert2 jika sedang aktif
+        if (typeof Swal !== 'undefined' && Swal.isVisible && Swal.isVisible()) {
+            Swal.close();
+            closedSomething = true;
+        }
+
+        // 2. Tutup Scanner aktif
+        if (this.state.isScannerRunning) {
+            this.stopScanner();
+            closedSomething = true;
+        }
+        if (this.state.productScanner) {
+            this.stopProductScanner();
+            closedSomething = true;
+        }
+        if (this.state.restockScanner) {
+            this.stopRestockScanner();
+            closedSomething = true;
+        }
+
+        // 3. Tutup Overlay Form Produk
+        const prodOverlay = document.getElementById('productFormOverlay');
+        if (prodOverlay && !prodOverlay.classList.contains('hidden')) {
+            prodOverlay.classList.add('hidden');
+            closedSomething = true;
+        }
+
+        // 4. Tutup Overlay Form Restok
+        const restockOverlay = document.getElementById('restockFormOverlay');
+        if (restockOverlay && !restockOverlay.classList.contains('hidden')) {
+            restockOverlay.classList.add('hidden');
+            closedSomething = true;
+        }
+
+        // 5. Tutup dropdown sugesti pencarian kasir
+        const suggestionsBox = document.getElementById('searchSuggestions');
+        if (suggestionsBox && !suggestionsBox.classList.contains('hidden')) {
+            suggestionsBox.classList.add('hidden');
+            closedSomething = true;
+        }
+
+        return closedSomething;
+    },
+
+    // Handler tombol Back Terpadu (digunakan oleh tombol back header & tombol back smartphone)
+    handleBack: function() {
+        // Jika ada modal / scanner / overlay yang aktif, tutup terlebih dahulu
+        if (this.closeAnyOpenModal()) {
+            return;
+        }
+
+        // Jika sedang di layar Checkout (Pembayaran), kembali ke Transaksi (POS)
+        if (this.state.currentView === 'checkout') {
+            this.navigate('pos');
+            return;
+        }
+
+        // Jika sedang di layar Struk Transaksi, kembali ke Transaksi (POS)
+        if (this.state.currentView === 'receipt') {
+            this.navigate('pos');
+            return;
+        }
+
+        // Jika sedang di sub-menu manapun selain dashboard, kembali ke Menu Utama (Dashboard)
+        if (this.state.currentView !== 'dashboard') {
+            this.navigate('dashboard');
+            return;
+        }
+    },
+
     // --- Core & Navigation ---
     navigate: function(viewId, pushHistory = true) {
         document.querySelectorAll('.view').forEach(v => v.classList.add('hidden'));
@@ -180,13 +278,11 @@ const app = {
         }
         
         const view = document.getElementById(`view-${viewId}`);
-        // H2 Fix: Fallback to dashboard if invalid view hash
         if(!view) {
             this.navigate('dashboard', false);
             return;
         }
         view.classList.remove('hidden');
-        // Sedikit delay agar display block diaplikasikan sebelum animasi
         setTimeout(() => view.classList.add('active'), 10);
         
         this.state.currentView = viewId;
@@ -205,12 +301,16 @@ const app = {
             backBtn.classList.add('hidden');
         } else {
             backBtn.classList.remove('hidden');
-            if(viewId === 'pos') { titleEl.textContent = 'Transaksi Baru'; this.updateCartUI(); }
+            if(viewId === 'pos') { 
+                titleEl.textContent = 'Transaksi Baru'; 
+                this.updateCartUI(); 
+                this.refreshProductsFromServer(); 
+            }
             if(viewId === 'checkout') titleEl.textContent = 'Pembayaran';
             if(viewId === 'receipt') { titleEl.textContent = 'Struk Transaksi'; backBtn.classList.add('hidden'); }
             if(viewId === 'history') { titleEl.textContent = 'Histori Transaksi'; this.renderTransactionList('all', 'transactionListContainer', 'searchTransaction'); this.refreshTransactionsFromServer(); }
             if(viewId === 'debt') { titleEl.textContent = 'Belum Lunas (Kasbon)'; this.renderTransactionList('Kasbon', 'debtListContainer', 'searchDebt'); this.refreshTransactionsFromServer(); }
-            if(viewId === 'products') { titleEl.textContent = 'Manajemen Produk'; this.renderProductList(); }
+            if(viewId === 'products') { titleEl.textContent = 'Manajemen Produk'; this.renderProductList(); this.refreshProductsFromServer(); }
             if(viewId === 'settings') { titleEl.textContent = 'Pengaturan'; this.showSettingsForm(); }
             if(viewId === 'saved') { titleEl.textContent = 'Transaksi Tersimpan'; this.renderSavedTransactions(); }
             if(viewId === 'reports') { titleEl.textContent = 'Laporan Keuangan'; this.initReports(); this.refreshTransactionsFromServer(); }
@@ -419,14 +519,27 @@ const app = {
         const input = document.getElementById('manualBarcode').value.trim();
         if(!input) return;
         
-        // H1 Fix: String() safety for Barcode_ID comparison
-        const p = this.state.products.find(x => String(x.Barcode_ID) == input || (x.Nama_Camilan && String(x.Nama_Camilan).toLowerCase().includes(input.toLowerCase())));
+        const cleanInput = input.toLowerCase().replace(/[\r\n\t]/g, '');
+        
+        // Cari produk dengan pencocokan barcode tepat, nama tepat, atau nama parsial
+        const p = this.state.products.find(x => 
+            compareBarcode(x.Barcode_ID, input) ||
+            (x.Barcode_ID && String(x.Barcode_ID).toLowerCase().trim() === cleanInput) ||
+            (x.Nama_Camilan && String(x.Nama_Camilan).toLowerCase().trim() === cleanInput) ||
+            (x.Nama_Camilan && String(x.Nama_Camilan).toLowerCase().trim().includes(cleanInput))
+        );
         if(p) {
             this.addToCart(p);
             document.getElementById('manualBarcode').value = '';
-            document.getElementById('searchSuggestions').classList.add('hidden');
+            const suggestionsBox = document.getElementById('searchSuggestions');
+            if (suggestionsBox) suggestionsBox.classList.add('hidden');
         } else {
-            Swal.fire('Error', 'Produk tidak ditemukan!', 'error');
+            Swal.fire({
+                title: 'Produk Tidak Ditemukan',
+                text: `Barcode / Kata kunci "${input}" tidak cocok dengan produk manapun di database.`,
+                icon: 'warning',
+                confirmButtonText: 'OK'
+            });
         }
     },
 
@@ -435,7 +548,7 @@ const app = {
         const currentStok = parseInt(product.Stok) || 0;
         const existing = this.state.cart.find(x => {
             if (product.Barcode_ID && product.Barcode_ID.toString().trim() !== "") {
-                return x.Barcode_ID && x.Barcode_ID.toString().trim() === product.Barcode_ID.toString().trim();
+                return x.Barcode_ID && compareBarcode(x.Barcode_ID, product.Barcode_ID);
             }
             return x.Nama_Camilan === product.Nama_Camilan;
         });
@@ -500,7 +613,7 @@ const app = {
 
     toggleCartBonus: function(identifier) {
         const item = this.state.cart.find(x => 
-            (x.Barcode_ID && x.Barcode_ID.toString().trim() === identifier.toString().trim()) || 
+            (x.Barcode_ID && compareBarcode(x.Barcode_ID, identifier)) || 
             (x.Nama_Camilan === identifier.toString())
         );
         if (item) {
@@ -517,7 +630,7 @@ const app = {
 
     updateCartItem: function(identifier, field, value) {
         const item = this.state.cart.find(x => 
-            (x.Barcode_ID && x.Barcode_ID.toString().trim() === identifier.toString().trim()) || 
+            (x.Barcode_ID && compareBarcode(x.Barcode_ID, identifier)) || 
             (x.Nama_Camilan === identifier.toString())
         );
         if(item) {
@@ -529,7 +642,7 @@ const app = {
                 }
                 // Peringatan jika melebihi stok, tapi tetap izinkan
                 const product = this.state.products.find(p =>
-                    (p.Barcode_ID && item.Barcode_ID && p.Barcode_ID.toString().trim() === item.Barcode_ID.toString().trim()) ||
+                    (p.Barcode_ID && item.Barcode_ID && compareBarcode(p.Barcode_ID, item.Barcode_ID)) ||
                     p.Nama_Camilan === item.Nama_Camilan
                 );
                 if (product) {
@@ -548,19 +661,24 @@ const app = {
     // Render dropdown saran pencarian produk dengan tombol '+' (tetap terbuka setelah tambah item)
     renderSearchSuggestions: function(term) {
         const suggestionsBox = document.getElementById('searchSuggestions');
+        if (!suggestionsBox) return;
         if (!term) {
             suggestionsBox.classList.add('hidden');
             suggestionsBox.innerHTML = '';
             return;
         }
 
-        const matches = this.state.products.filter(p => 
-            (p.Barcode_ID && String(p.Barcode_ID).toLowerCase().includes(term)) || 
-            (p.Nama_Camilan && String(p.Nama_Camilan).toLowerCase().includes(term))
-        );
+        const cleanTerm = term.trim().toLowerCase().replace(/[\r\n\t]/g, '');
+
+        const matches = this.state.products.filter(p => {
+            if (!p) return false;
+            const bc = p.Barcode_ID ? String(p.Barcode_ID).toLowerCase().trim().replace(/[\r\n\t]/g, '') : '';
+            const name = p.Nama_Camilan ? String(p.Nama_Camilan).toLowerCase().trim() : '';
+            return bc.includes(cleanTerm) || name.includes(cleanTerm) || compareBarcode(p.Barcode_ID, cleanTerm);
+        });
 
         if (matches.length === 0) {
-            suggestionsBox.innerHTML = '<div class="suggestion-item" style="color: #999; cursor: default;">Produk tidak ditemukan</div>';
+            suggestionsBox.innerHTML = '<div class="suggestion-item" style="color: #999; cursor: default; padding: 12px; text-align: center;"><i class="fas fa-search" style="margin-right: 6px; opacity: 0.5;"></i>Produk tidak ditemukan</div>';
             suggestionsBox.classList.remove('hidden');
             return;
         }
@@ -569,11 +687,11 @@ const app = {
         const prevScroll = suggestionsBox.scrollTop;
 
         suggestionsBox.innerHTML = '';
-        matches.slice(0, 15).forEach(p => {
+        matches.slice(0, 20).forEach(p => {
             // Hitung jumlah item ini yang sudah di keranjang
             const inCart = this.state.cart.find(c => {
                 if (p.Barcode_ID && p.Barcode_ID.toString().trim() !== "") {
-                    return c.Barcode_ID && c.Barcode_ID.toString().trim() === p.Barcode_ID.toString().trim();
+                    return c.Barcode_ID && compareBarcode(c.Barcode_ID, p.Barcode_ID);
                 }
                 return c.Nama_Camilan === p.Nama_Camilan;
             });
@@ -586,7 +704,7 @@ const app = {
             item.innerHTML = `
                 <div class="suggestion-info">
                     <div class="suggestion-name">${p.Nama_Camilan}</div>
-                    <div class="suggestion-meta">${formatRupiah(p.Harga)} · Stok: ${sisaStok}${qtyInCart > 0 ? ` (${qtyInCart} di keranjang)` : ''}</div>
+                    <div class="suggestion-meta">${formatRupiah(p.Harga)} · Stok: <b style="color: ${sisaStok <= 0 ? 'var(--danger)' : 'inherit'}">${sisaStok}</b>${qtyInCart > 0 ? ` (${qtyInCart} di keranjang)` : ''}</div>
                 </div>
                 <button class="suggestion-add-btn" title="Tambah ke keranjang">+</button>
             `;
@@ -2311,16 +2429,18 @@ const app = {
         };
         
         const onScanSuccess = (text) => {
+            if (!text) return;
+            const cleanText = text.trim().replace(/[\r\n\t]/g, '');
             playBeep();
             if ("vibrate" in navigator) navigator.vibrate([100, 50, 100]);
             
             // Cari produk berdasarkan barcode yang discan
-            const product = this.state.products.find(x => compareBarcode(x.Barcode_ID, text));
+            const product = this.state.products.find(x => compareBarcode(x.Barcode_ID, cleanText));
             if (product) {
                 this.selectRestockProduct(product);
                 Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: `Produk: ${product.Nama_Camilan}`, showConfirmButton: false, timer: 1500 });
             } else {
-                Swal.fire('Gagal', `Barcode "${text}" belum terdaftar! Silakan daftarkan produk baru terlebih dahulu.`, 'warning');
+                Swal.fire('Gagal', `Barcode "${cleanText}" belum terdaftar! Silakan daftarkan produk baru terlebih dahulu.`, 'warning');
             }
             this.stopRestockScanner();
         };
@@ -2536,11 +2656,13 @@ const app = {
         };
         
         const onScanSuccess = (text) => {
+            if (!text) return;
+            const cleanText = text.trim().replace(/[\r\n\t]/g, '');
             playBeep();
             if ("vibrate" in navigator) navigator.vibrate([100, 50, 100]);
-            document.getElementById('prodFormBarcode').value = text;
+            document.getElementById('prodFormBarcode').value = cleanText;
             this.stopProductScanner();
-            Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: `Barcode: ${text}`, showConfirmButton: false, timer: 1500 });
+            Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: `Barcode: ${cleanText}`, showConfirmButton: false, timer: 1500 });
         };
         
         // Coba kamera belakang dahulu
@@ -2655,14 +2777,22 @@ const app = {
         try {
             const response = await fetch(`${GAS_URL}?action=getProducts`);
             const resData = await response.json();
-            if (resData.status === 'success' && resData.data) {
-                // Merge: perbarui stok & batches dari server, tapi pertahankan perubahan lokal yang belum tersync
+            if (resData.status === 'success' && Array.isArray(resData.data)) {
                 const serverProducts = resData.data;
+
+                // 1. Kumpulkan produk lokal baru dan produk yang dihapus di syncQueue (belum diproses server)
+                const pendingNewProducts = [];
+                const pendingDeletedBarcodes = new Set();
+                const pendingDeletedNames = new Set();
                 const pendingTrxItems = [];
 
-                // Kumpulkan item dari transaksi yang masih di antrean sync (belum terkirim ke server)
                 this.state.syncQueue.forEach(q => {
-                    if (q.type === 'transaction' && q.data && q.data.items) {
+                    if (q.type === 'product' && q.data) {
+                        pendingNewProducts.push(q.data);
+                    } else if (q.type === 'delete_product' && q.data) {
+                        if (q.data.Barcode_ID) pendingDeletedBarcodes.add(q.data.Barcode_ID.toString().trim().toLowerCase());
+                        if (q.data.Nama_Camilan) pendingDeletedNames.add(q.data.Nama_Camilan.toString().trim().toLowerCase());
+                    } else if (q.type === 'transaction' && q.data && q.data.items) {
                         q.data.items.forEach(item => {
                             pendingTrxItems.push({
                                 barcode: item.Barcode_ID,
@@ -2673,27 +2803,71 @@ const app = {
                     }
                 });
 
-                // Terapkan pengurangan stok lokal yang pending di atas stok server
-                serverProducts.forEach(sp => {
+                // 2. Filter server products (hilangkan yang sudah dihapus secara lokal di antrean sync)
+                let mergedProducts = serverProducts.filter(sp => {
+                    const bc = sp.Barcode_ID ? sp.Barcode_ID.toString().trim().toLowerCase() : '';
+                    const nm = sp.Nama_Camilan ? sp.Nama_Camilan.toString().trim().toLowerCase() : '';
+                    if (bc !== '' && pendingDeletedBarcodes.has(bc)) return false;
+                    if (nm !== '' && pendingDeletedNames.has(nm)) return false;
+                    return true;
+                });
+
+                // 3. Tambahkan produk lokal baru jika belum ada di server
+                pendingNewProducts.forEach(localP => {
+                    const exists = mergedProducts.some(sp => 
+                        (localP.Barcode_ID && sp.Barcode_ID && compareBarcode(localP.Barcode_ID, sp.Barcode_ID)) ||
+                        (localP.Nama_Camilan && sp.Nama_Camilan && localP.Nama_Camilan.toString().trim().toLowerCase() === sp.Nama_Camilan.toString().trim().toLowerCase())
+                    );
+                    if (!exists) {
+                        mergedProducts.push(localP);
+                    }
+                });
+
+                // 4. Terapkan pengurangan stok lokal untuk transaksi offline yang belum terkirim
+                mergedProducts.forEach(sp => {
                     pendingTrxItems.forEach(pending => {
-                        const match = (sp.Barcode_ID && pending.barcode &&
-                            sp.Barcode_ID.toString().trim() !== '' &&
-                            sp.Barcode_ID.toString().trim() === pending.barcode.toString().trim()) ||
-                            sp.Nama_Camilan === pending.name;
+                        const match = (sp.Barcode_ID && pending.barcode && compareBarcode(sp.Barcode_ID, pending.barcode)) ||
+                                      (sp.Nama_Camilan && pending.name && sp.Nama_Camilan.toString().trim().toLowerCase() === pending.name.toString().trim().toLowerCase());
                         if (match) {
-                            sp.Stok = Math.max(0, parseInt(sp.Stok) - pending.qty);
+                            sp.Stok = Math.max(0, (parseInt(sp.Stok) || 0) - pending.qty);
                             if (sp.Stok === 0) sp.Status = 'Habis';
                         }
                     });
                 });
 
-                this.state.products = serverProducts;
+                this.state.products = mergedProducts;
                 this.saveData();
-                console.log('Stok produk diperbarui dari server setelah sync');
+
+                // Perbarui tampilan jika sedang di halaman Manajemen Produk atau Transaksi
+                if (this.state.currentView === 'products' && typeof this.renderProductList === 'function') {
+                    this.renderProductList();
+                } else if (this.state.currentView === 'pos') {
+                    const manualInput = document.getElementById('manualBarcode');
+                    const term = manualInput ? manualInput.value.trim().toLowerCase() : '';
+                    if (term && typeof this.renderSearchSuggestions === 'function') {
+                        this.renderSearchSuggestions(term);
+                    }
+                }
+                console.log('Stok & daftar produk berhasil disinkronkan dari server:', mergedProducts.length);
             }
         } catch (e) {
             console.error('Gagal refresh produk dari server:', e);
         }
+    },
+
+    refreshProductsFromServerWithToast: async function() {
+        if (!navigator.onLine) {
+            return Swal.fire('Offline', 'Koneksi internet tidak tersedia untuk menyinkronkan data produk dengan Google Sheets.', 'warning');
+        }
+        Swal.fire({ title: 'Menyinkronkan Produk...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+        await this.refreshProductsFromServer();
+        Swal.fire({ 
+            icon: 'success', 
+            title: 'Produk Tersinkronisasi', 
+            text: `${this.state.products.length} produk siap digunakan di kasir!`, 
+            timer: 1500, 
+            showConfirmButton: false 
+        });
     },
 
     refreshTransactionsFromServer: async function() {
@@ -2971,21 +3145,27 @@ const app = {
         
         // Callback scan berhasil — Kamera tetap membaca (tanpa pause)
         const onScanSuccess = (text) => {
+            if (!text) return;
+            const cleanText = text.trim().replace(/[\r\n\t]/g, '');
             const now = Date.now();
             
             // Cooldown 1.5 detik HANYA jika menscan barcode yang SAMA berturut-turut.
             // Barcode BERBEDA bisa discan secara instan tanpa delay/pause.
-            if (text === this.state.lastScannedBarcode && (now - this.state.lastScannedTime < 1500)) {
+            if (cleanText === this.state.lastScannedBarcode && (now - this.state.lastScannedTime < 1500)) {
                 return;
             }
             
-            this.state.lastScannedBarcode = text;
+            this.state.lastScannedBarcode = cleanText;
             this.state.lastScannedTime = now;
             
             playBeep();
             if ("vibrate" in navigator) navigator.vibrate(80);
             
-            const p = this.state.products.find(x => compareBarcode(x.Barcode_ID, text));
+            const p = this.state.products.find(x => 
+                compareBarcode(x.Barcode_ID, cleanText) || 
+                (x.Barcode_ID && String(x.Barcode_ID).toLowerCase().trim() === cleanText.toLowerCase()) ||
+                (x.Nama_Camilan && String(x.Nama_Camilan).toLowerCase().trim() === cleanText.toLowerCase())
+            );
             if(p) {
                 this.addToCart(p);
             } else {
@@ -2993,7 +3173,7 @@ const app = {
                     toast: true,
                     position: 'top-end',
                     icon: 'error',
-                    title: `Barcode "${text}" tidak ditemukan`,
+                    title: `Barcode "${cleanText}" tidak ditemukan`,
                     showConfirmButton: false,
                     timer: 2000
                 });
