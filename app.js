@@ -3117,7 +3117,38 @@ const app = {
                 if (this.state.syncQueue.length === 0) {
                     Swal.fire('Berhasil', 'Semua data berhasil tersinkronisasi ke Google Sheets!', 'success');
                 } else {
-                    Swal.fire('Perhatian', `Sinkronisasi selesai dengan ${this.state.syncQueue.length} data tersisa (kemungkinan Apps Script perlu di-deploy ulang).`, 'warning');
+                    const queueSummary = this.state.syncQueue.map((q, i) => {
+                        let desc = q.type || 'Data';
+                        if (q.type === 'transaction' && q.data) desc += ` (ID: ${q.data.id || '—'})`;
+                        if (q.type === 'product' && q.data) desc += ` (${q.data.Nama_Camilan || q.data.Barcode_ID || '—'})`;
+                        if (q.type === 'restock' && q.data) desc += ` (${q.data.Nama_Camilan || q.data.Barcode_ID || '—'})`;
+                        return `${i+1}. ${desc}`;
+                    }).join('<br>');
+
+                    Swal.fire({
+                        title: 'Perhatian',
+                        html: `<div style="text-align: left; font-size: 0.9rem;">
+                            <p>Sinkronisasi selesai dengan <b>${this.state.syncQueue.length} data tersisa</b> yang belum diterima Google Sheets.</p>
+                            <div style="background: #f8fafc; padding: 10px; border-radius: 8px; border: 1px solid #e2e8f0; margin: 10px 0; font-size: 0.85rem; max-height: 120px; overflow-y: auto;">
+                                <b>Daftar antrean tertunda:</b><br>${queueSummary}
+                            </div>
+                            <p style="color: #64748b; font-size: 0.85rem;">
+                                <b>Solusi:</b> Silakan lakukan <b>Deploy Ulang (New Deployment)</b> pada Google Apps Script Anda agar server mengenali fungsi terbaru.
+                            </p>
+                        </div>`,
+                        icon: 'warning',
+                        showCancelButton: true,
+                        confirmButtonText: 'OK, Saya Cek Apps Script',
+                        cancelButtonText: '🗑️ Bersihkan Antrean',
+                        cancelButtonColor: '#e74c3c'
+                    }).then((r) => {
+                        if (r.dismiss === Swal.DismissReason.cancel) {
+                            this.state.syncQueue = [];
+                            this.saveData();
+                            this.checkOfflineQueue();
+                            Swal.fire('Dibersihkan', 'Antrean sinkronisasi telah dikosongkan.', 'success');
+                        }
+                    });
                 }
             }
         });
