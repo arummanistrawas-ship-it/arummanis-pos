@@ -3701,13 +3701,26 @@ const app = {
 
             let printChar = null;
 
+            // Prioritaskan characteristic yang mendukung write (dengan konfirmasi/acknowledgment)
+            // karena writeWithoutResponse bisa lolos tanpa data benar-benar sampai ke printer
+            const findBestPrintChar = (chars) => {
+                // Prioritas 1: write-with-response (paling reliabel, printer mengkonfirmasi penerimaan)
+                const writeChar = chars.find(c => c.properties.write);
+                if (writeChar) return writeChar;
+                // Prioritas 2: writeWithoutResponse (fallback jika write tidak tersedia)
+                return chars.find(c => c.properties.writeWithoutResponse) || null;
+            };
+
             // 1. Fast-path: Scan daftar known services printer ESC/POS & BLE UART
             for (const serviceUuid of PRINTER_SERVICES) {
                 try {
                     const service = await server.getPrimaryService(serviceUuid);
                     const chars = await service.getCharacteristics();
-                    printChar = chars.find(c => c.properties.write || c.properties.writeWithoutResponse);
-                    if (printChar) break;
+                    printChar = findBestPrintChar(chars);
+                    if (printChar) {
+                        console.log(`Printer char ditemukan di service ${serviceUuid}, write=${printChar.properties.write}, writeNoResp=${printChar.properties.writeWithoutResponse}`);
+                        break;
+                    }
                 } catch (e) {
                     continue;
                 }
@@ -3720,8 +3733,11 @@ const app = {
                     for (const s of services) {
                         try {
                             const chars = await s.getCharacteristics();
-                            printChar = chars.find(c => c.properties.write || c.properties.writeWithoutResponse);
-                            if (printChar) break;
+                            printChar = findBestPrintChar(chars);
+                            if (printChar) {
+                                console.log(`Printer char ditemukan via full-scan, write=${printChar.properties.write}, writeNoResp=${printChar.properties.writeWithoutResponse}`);
+                                break;
+                            }
                         } catch (e) {}
                     }
                 } catch (e) {}
@@ -3765,6 +3781,58 @@ const app = {
 
             throw err;
         }
+    },
+
+    // Fungsi sentral pengiriman data byte ke printer BLE
+    // Menggunakan writeValue (write-with-response) sebagai metode utama karena printer mengkonfirmasi 
+    // setiap chunk yang diterima. writeValueWithoutResponse hanya digunakan sebagai fallback.
+    _writeChunksToPrinter: async function(printChar, fullBytes) {
+        const CHUNK_SIZE = 100; // Ukuran chunk aman untuk mayoritas printer thermal BLE
+        const DELAY_MS = 40;   // Delay antar chunk (mencegah buffer overflow pada chip BLE)
+        
+        const useWriteWithResponse = printChar.properties.write;
+        const useWriteWithoutResponse = printChar.properties.writeWithoutResponse;
+        
+        console.log(`BLE Print: ${fullBytes.length} bytes, chunk=${CHUNK_SIZE}, write=${useWriteWithResponse}, writeNoResp=${useWriteWithoutResponse}`);
+        
+        for (let i = 0; i < fullBytes.length; i += CHUNK_SIZE) {
+            const chunk = fullBytes.slice(i, i + CHUNK_SIZE);
+            // Bungkus dalam DataView untuk kompatibilitas Android WebView & Chrome
+            const dataView = new DataView(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+            
+            try {
+                if (useWriteWithResponse) {
+                    // Metode utama: writeValue menunggu konfirmasi dari printer bahwa data diterima
+                    await printChar.writeValue(dataView);
+                } else if (useWriteWithoutResponse) {
+                    // Fallback: writeWithoutResponse (fire-and-forget, kurang reliabel)
+                    await printChar.writeValueWithoutResponse(dataView);
+                } else {
+                    // Last resort: coba writeValue langsung
+                    await printChar.writeValue(dataView);
+                }
+            } catch (writeErr) {
+                console.warn(`BLE write error at offset ${i}, retrying...`, writeErr);
+                // Retry 1x dengan delay lebih panjang
+                await new Promise(r => setTimeout(r, 100));
+                try {
+                    if (useWriteWithResponse) {
+                        await printChar.writeValue(dataView);
+                    } else {
+                        await printChar.writeValueWithoutResponse(dataView);
+                    }
+                } catch (retryErr) {
+                    console.error(`BLE write retry failed at offset ${i}:`, retryErr);
+                    throw new Error('Gagal mengirim data ke printer. Pastikan printer masih menyala dan dekat.');
+                }
+            }
+            
+            // Delay antar chunk agar buffer printer tidak overflow
+            if (i + CHUNK_SIZE < fullBytes.length) {
+                await new Promise(r => setTimeout(r, DELAY_MS));
+            }
+        }
+        console.log('BLE Print: Seluruh data berhasil dikirim ke printer.');
     },
 
     testConnectPrinter: async function() {
@@ -3827,18 +3895,9 @@ const app = {
             dataBuffer.push(...encoder.encode('--------------------------------\n'));
             dataBuffer.push(...encoder.encode((settings.receiptFooter || 'Terima Kasih!') + '\n\n\n'));
 
-            // Write chunks to printer with 80 bytes limit and 20ms delay to prevent buffer overflow
-            const chunkSize = 80;
+            // Kirim data ke printer dalam chunk kecil (maks 100 byte)
             const fullBytes = new Uint8Array(dataBuffer);
-            for (let i = 0; i < fullBytes.length; i += chunkSize) {
-                const chunk = fullBytes.slice(i, i + chunkSize);
-                if (printChar.writeValueWithoutResponse) {
-                    await printChar.writeValueWithoutResponse(chunk).catch(async () => await printChar.writeValue(chunk));
-                } else {
-                    await printChar.writeValue(chunk);
-                }
-                await new Promise(r => setTimeout(r, 20));
-            }
+            await this._writeChunksToPrinter(printChar, fullBytes);
 
             this.updatePrinterStatusUI();
 
@@ -4037,16 +4096,7 @@ const app = {
                 offset += arr.length;
             });
 
-            const chunkSize = 80;
-            for (let i = 0; i < finalBytes.length; i += chunkSize) {
-                const chunk = finalBytes.slice(i, i + chunkSize);
-                if (printChar.writeValueWithoutResponse) {
-                    await printChar.writeValueWithoutResponse(chunk).catch(async () => await printChar.writeValue(chunk));
-                } else {
-                    await printChar.writeValue(chunk);
-                }
-                await new Promise(r => setTimeout(r, 20));
-            }
+            await this._writeChunksToPrinter(printChar, finalBytes);
             Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Struk berhasil dicetak', showConfirmButton: false, timer: 2000 });
         } catch (e) {
             if (e.name !== 'NotFoundError') Swal.fire('Gagal', e.message, 'error');
