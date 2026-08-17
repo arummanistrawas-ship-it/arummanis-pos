@@ -1287,6 +1287,16 @@ const app = {
         });
         trx.batchDeductions = batchDeductions; // Store for rollback
 
+        // Hitung HPP dan Laba Bersih langsung saat checkout (data batch masih tersedia di memori)
+        let localHPP = 0;
+        trx.items.forEach(item => {
+            const qty = parseInt(item.qty) || 0;
+            const costPrice = this.getProductCostPrice(item);
+            localHPP += costPrice * qty;
+        });
+        trx.hpp = localHPP;
+        trx.netProfit = (parseFloat(trx.total) || 0) - localHPP;
+
         // Insert at beginning
         this.state.transactions.unshift(trx);
         this.state.syncQueue.push({ type: 'transaction', data: trx });
@@ -1517,6 +1527,18 @@ const app = {
         const activeBtn = document.querySelector(`.report-period-btn[data-period="${period}"]`);
         if (activeBtn) activeBtn.classList.add('active');
         this.updateDatePickerVisibility();
+
+        // Auto-set default date saat pindah tab agar tidak kosong
+        const dateInput = document.getElementById('reportDate');
+        const today = new Date();
+        if (period === 'daily' || period === 'weekly') {
+            dateInput.value = today.toISOString().split('T')[0];
+        } else if (period === 'monthly') {
+            dateInput.value = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0');
+        } else if (period === 'yearly') {
+            dateInput.value = today.getFullYear();
+        }
+
         this.renderReports();
     },
 
@@ -1587,9 +1609,37 @@ const app = {
         }
 
         return transactions.filter(trx => {
-            const trxDate = new Date(trx.timestamp);
+            const trxDate = this._parseTransactionDate(trx.timestamp);
+            if (!trxDate || isNaN(trxDate.getTime())) return false;
             return trxDate >= startDate && trxDate <= endDate;
         });
+    },
+
+    // Smart parser: menangani format ISO (lokal) DAN DD/MM/YYYY HH:MM:SS (dari Google Sheets)
+    _parseTransactionDate: function(timestamp) {
+        if (!timestamp) return null;
+        // Jika sudah Date object
+        if (timestamp instanceof Date) return timestamp;
+        const str = timestamp.toString().trim();
+        // Coba parse ISO format dulu (2026-08-17T09:00:00.000Z)
+        const isoDate = new Date(str);
+        if (!isNaN(isoDate.getTime()) && str.includes('-') && (str.includes('T') || str.length === 10)) {
+            return isoDate;
+        }
+        // Parse DD/MM/YYYY atau DD/MM/YYYY HH:MM:SS (format Google Sheets Indonesia)
+        const match = str.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
+        if (match) {
+            const day = parseInt(match[1]);
+            const month = parseInt(match[2]) - 1;
+            const year = parseInt(match[3]);
+            const hour = parseInt(match[4]) || 0;
+            const min = parseInt(match[5]) || 0;
+            const sec = parseInt(match[6]) || 0;
+            return new Date(year, month, day, hour, min, sec);
+        }
+        // Fallback: coba parse langsung
+        const fallback = new Date(str);
+        return isNaN(fallback.getTime()) ? null : fallback;
     },
 
     getPreviousPeriodDate: function(period, refDate) {
@@ -1619,8 +1669,22 @@ const app = {
                 to: document.getElementById('reportDateTo').value
             };
         } else if (period === 'yearly') {
-                    } else {
-            return new Date(dateInput.value);
+            const year = parseInt(dateInput.value) || new Date().getFullYear();
+            return new Date(year, 0, 1);
+        } else if (period === 'monthly') {
+            // dateInput.value = "2026-08" → parse as local date
+            const parts = dateInput.value.split('-');
+            if (parts.length >= 2) {
+                return new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, 1);
+            }
+            return new Date();
+        } else {
+            // daily / weekly: dateInput.value = "2026-08-17"
+            const parts = dateInput.value.split('-');
+            if (parts.length === 3) {
+                return new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+            }
+            return new Date();
         }
     },
 
@@ -1666,13 +1730,17 @@ const app = {
                 });
             }
 
-            // Gunakan netProfit dari server jika tersedia (dari Google Sheets DatabaseTransaksi)
+            // Prioritas 1: netProfit yang sudah tersimpan (dari checkout lokal ATAU dari server)
             if (trx.netProfit !== undefined && trx.netProfit !== null && !isNaN(parseFloat(trx.netProfit))) {
-                laba += parseFloat(trx.netProfit);
-            } else if (trx.hpp !== undefined && trx.hpp !== null && !isNaN(parseFloat(trx.hpp))) {
+                const np = parseFloat(trx.netProfit);
+                laba += np;
+            }
+            // Prioritas 2: HPP yang sudah tersimpan
+            else if (trx.hpp !== undefined && trx.hpp !== null && !isNaN(parseFloat(trx.hpp)) && parseFloat(trx.hpp) > 0) {
                 laba += (trxTotal - parseFloat(trx.hpp));
-            } else {
-                // Fallback untuk transaksi lokal tanpa data HPP/netProfit server:
+            }
+            // Fallback 3: Recalculate (hanya untuk transaksi lama tanpa data hpp/netProfit)
+            else {
                 let trxHpp = 0;
                 if (trx.items && Array.isArray(trx.items)) {
                     trx.items.forEach(item => {
@@ -1681,7 +1749,14 @@ const app = {
                         trxHpp += costPrice * qty;
                     });
                 }
-                laba += (trxTotal - trxHpp);
+                // Jika HPP recalc = 0 dan ada omset (berarti cost lookup gagal total),
+                // jangan tambahkan laba = omset (karena pasti salah). Tandai sebagai 0.
+                if (trxHpp === 0 && trxTotal > 0) {
+                    // Laba tidak diketahui, skip (lebih baik 0 daripada salah)
+                    laba += 0;
+                } else {
+                    laba += (trxTotal - trxHpp);
+                }
             }
         });
 
@@ -1728,11 +1803,9 @@ const app = {
 
         // Validate inputs
         if (period === 'custom') {
-            if (!refDate.from || !refDate.to) return;
-        } else if (period === 'yearly') {
-            if (isNaN(refDate.getTime())) return;
+            if (!refDate || !refDate.from || !refDate.to) return;
         } else {
-            if (!refDate || isNaN(refDate.getTime())) return;
+            if (!refDate || !(refDate instanceof Date) || isNaN(refDate.getTime())) return;
         }
 
         // Get filtered transactions
@@ -1782,6 +1855,17 @@ const app = {
 
         transactions.forEach(trx => {
             if (!trx.items || !Array.isArray(trx.items)) return;
+
+            // Hitung proporsi laba per item jika transaksi punya netProfit tersimpan
+            const trxHasStoredProfit = (trx.netProfit !== undefined && trx.netProfit !== null && !isNaN(parseFloat(trx.netProfit)));
+            const trxHasStoredHpp = (trx.hpp !== undefined && trx.hpp !== null && !isNaN(parseFloat(trx.hpp)) && parseFloat(trx.hpp) > 0);
+            const trxTotal = parseFloat(trx.total) || 0;
+            const trxNetProfit = trxHasStoredProfit ? parseFloat(trx.netProfit) : (trxHasStoredHpp ? (trxTotal - parseFloat(trx.hpp)) : null);
+
+            // Hitung total qty dalam transaksi ini (untuk proporsi)
+            let totalQtyInTrx = 0;
+            trx.items.forEach(item => { totalQtyInTrx += (parseInt(item.qty) || 0); });
+
             trx.items.forEach(item => {
                 const name = item.Nama_Camilan || 'Unknown';
                 const qty = parseInt(item.qty) || 0;
@@ -1789,10 +1873,18 @@ const app = {
 
                 const isBonus = !!item.isBonus;
                 const sellPrice = isBonus ? 0 : (parseFloat(item.editPrice) || parseFloat(item.Harga) || 0);
-                const costPrice = this.getProductCostPrice(item);
-                
                 const revenue = sellPrice * qty;
-                const profit = (sellPrice - costPrice) * qty;
+
+                // Hitung profit per item: gunakan data tersimpan jika ada
+                let profit = 0;
+                if (trxNetProfit !== null && totalQtyInTrx > 0) {
+                    // Distribusikan laba secara proporsional berdasarkan qty
+                    profit = (qty / totalQtyInTrx) * trxNetProfit;
+                } else {
+                    // Fallback: hitung per item
+                    const costPrice = this.getProductCostPrice(item);
+                    profit = (sellPrice - costPrice) * qty;
+                }
 
                 if (!productMap[name]) {
                     productMap[name] = { name, totalQty: 0, totalRevenue: 0, totalProfit: 0 };
