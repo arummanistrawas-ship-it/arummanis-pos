@@ -107,6 +107,50 @@ const findProduct = (products, identifier, name) => {
     return null;
 };
 
+// Helper parsing angka/mata uang tahan segala format (IDR, ribuan titik, koma desimal, teks Rp, null, undefined)
+const cleanNumber = (val) => {
+    if (val === null || val === undefined || val === '') return 0;
+    if (typeof val === 'number') return isNaN(val) ? 0 : val;
+    let str = val.toString().trim();
+    // Hapus awalan Rp, Rp., IDR, dan spasi
+    str = str.replace(/^(?:Rp\.?|IDR)\s*/i, '').trim();
+    if (!str) return 0;
+    
+    // Jika integer murni
+    if (/^-?\d+$/.test(str)) return parseInt(str, 10);
+    
+    // Format Indonesia dengan pemisah ribuan titik: "10.000" atau "1.500.000" atau "10.000,50"
+    if (/^-?\d{1,3}(\.\d{3})+(,\d+)?$/.test(str)) {
+        str = str.replace(/\./g, '').replace(',', '.');
+        return parseFloat(str) || 0;
+    }
+    
+    // Format Inggris dengan koma: "10,000" atau "1,500,000" atau "10,000.50"
+    if (/^-?\d{1,3}(,\d{3})+(\.\d+)?$/.test(str)) {
+        str = str.replace(/,/g, '');
+        return parseFloat(str) || 0;
+    }
+    
+    // Format koma desimal: "10000,50"
+    if (/^-?\d+,\d+$/.test(str)) {
+        str = str.replace(',', '.');
+        return parseFloat(str) || 0;
+    }
+    
+    // Pembersihan umum jika ada sisa karakter
+    const cleaned = str.replace(/[^0-9.,-]/g, '');
+    if (cleaned.indexOf('.') > -1 && cleaned.indexOf(',') === -1) {
+        const parts = cleaned.split('.');
+        if (parts.length === 2 && parts[1].length === 3) {
+            return parseInt(parts[0] + parts[1], 10) || 0;
+        } else if (parts.length > 2) {
+            return parseInt(parts.join(''), 10) || 0;
+        }
+    }
+    const num = parseFloat(cleaned);
+    return isNaN(num) ? 0 : num;
+};
+
 const app = {
     state: {
         products: [],
@@ -1689,25 +1733,37 @@ const app = {
     },
 
     getProductCostPrice: function(item) {
+        if (!item) return 0;
         const p = findProduct(this.state.products, item.Barcode_ID, item.Nama_Camilan);
         let costPrice = 0;
         
         if (p) {
             // 1. Cek Harga_Modal atau Harga_Beli di objek produk
-            costPrice = parseFloat(p.Harga_Modal) || parseFloat(p.Harga_Beli) || 0;
+            costPrice = cleanNumber(p.Harga_Modal) || cleanNumber(p.Harga_Beli) || 0;
             
             // 2. Jika 0, cek dari rincian batch produk di StokBatch
             if (costPrice === 0 && p.batches && Array.isArray(p.batches) && p.batches.length > 0) {
-                const validBatch = p.batches.find(b => parseFloat(b.hargaBeli) > 0);
+                const validBatch = p.batches.find(b => cleanNumber(b.hargaBeli) > 0);
                 if (validBatch) {
-                    costPrice = parseFloat(validBatch.hargaBeli);
+                    costPrice = cleanNumber(validBatch.hargaBeli);
                 }
             }
         }
         
         // 3. Jika masih 0, cek dari item transaksi langsung
         if (costPrice === 0) {
-            costPrice = parseFloat(item.Harga_Beli) || parseFloat(item.Harga_Modal) || 0;
+            costPrice = cleanNumber(item.Harga_Beli) || cleanNumber(item.Harga_Modal) || 0;
+        }
+        
+        // 4. Default Fallback Cerdas:
+        // Jika produk sama sekali belum pernah diinput harga modalnya (0),
+        // gunakan estimasi modal wajar (80% dari harga normal produk atau harga jual)
+        // agar tidak menyebabkan margin 100% atau laba Rp 0 palsu
+        if (costPrice === 0) {
+            const basePrice = (p ? cleanNumber(p.Harga) : 0) || cleanNumber(item.Harga) || cleanNumber(item.editPrice) || 0;
+            if (basePrice > 0) {
+                costPrice = Math.floor(basePrice * 0.8);
+            }
         }
         
         return costPrice;
@@ -1718,8 +1774,8 @@ const app = {
         const trxCount = transactions.length;
 
         transactions.forEach(trx => {
-            const trxTotal = parseFloat(trx.total) || 0;
-            const trxDisc = parseFloat(trx.discount) || 0;
+            const trxTotal = cleanNumber(trx.total) || 0;
+            const trxDisc = cleanNumber(trx.discount) || 0;
             omset += trxTotal;
             totalDiskon += trxDisc;
 
@@ -1730,33 +1786,31 @@ const app = {
                 });
             }
 
-            // Prioritas 1: netProfit yang sudah tersimpan (dari checkout lokal ATAU dari server)
-            if (trx.netProfit !== undefined && trx.netProfit !== null && !isNaN(parseFloat(trx.netProfit))) {
-                const np = parseFloat(trx.netProfit);
-                laba += np;
+            // Hitung HPP per transaksi dari rincian item (karena item.editPrice dan data modal produk real-time paling akurat)
+            let trxHpp = 0;
+            let hasItemCosts = false;
+
+            if (trx.items && Array.isArray(trx.items) && trx.items.length > 0) {
+                trx.items.forEach(item => {
+                    const qty = parseInt(item.qty) || 0;
+                    const costPrice = this.getProductCostPrice(item);
+                    if (costPrice > 0) hasItemCosts = true;
+                    trxHpp += costPrice * qty;
+                });
             }
-            // Prioritas 2: HPP yang sudah tersimpan
-            else if (trx.hpp !== undefined && trx.hpp !== null && !isNaN(parseFloat(trx.hpp)) && parseFloat(trx.hpp) > 0) {
-                laba += (trxTotal - parseFloat(trx.hpp));
-            }
-            // Fallback 3: Recalculate (hanya untuk transaksi lama tanpa data hpp/netProfit)
-            else {
-                let trxHpp = 0;
-                if (trx.items && Array.isArray(trx.items)) {
-                    trx.items.forEach(item => {
-                        const qty = parseInt(item.qty) || 0;
-                        const costPrice = this.getProductCostPrice(item);
-                        trxHpp += costPrice * qty;
-                    });
-                }
-                // Jika HPP recalc = 0 dan ada omset (berarti cost lookup gagal total),
-                // jangan tambahkan laba = omset (karena pasti salah). Tandai sebagai 0.
-                if (trxHpp === 0 && trxTotal > 0) {
-                    // Laba tidak diketahui, skip (lebih baik 0 daripada salah)
-                    laba += 0;
-                } else {
-                    laba += (trxTotal - trxHpp);
-                }
+
+            // Jika item recalculation menghasilkan HPP yang valid, gunakan itu:
+            if (hasItemCosts && trxHpp > 0) {
+                laba += (trxTotal - trxHpp);
+            } else if (trx.netProfit !== undefined && trx.netProfit !== null && !isNaN(cleanNumber(trx.netProfit)) && cleanNumber(trx.netProfit) > 0) {
+                // Gunakan netProfit dari server jika tidak ada detail item
+                laba += cleanNumber(trx.netProfit);
+            } else if (trx.hpp !== undefined && trx.hpp !== null && !isNaN(cleanNumber(trx.hpp)) && cleanNumber(trx.hpp) > 0) {
+                // Gunakan HPP tersimpan
+                laba += (trxTotal - cleanNumber(trx.hpp));
+            } else {
+                // Fallback estimasi 20% margin jika benar-benar tanpa data modal
+                laba += Math.floor(trxTotal * 0.2);
             }
         });
 
@@ -1856,35 +1910,16 @@ const app = {
         transactions.forEach(trx => {
             if (!trx.items || !Array.isArray(trx.items)) return;
 
-            // Hitung proporsi laba per item jika transaksi punya netProfit tersimpan
-            const trxHasStoredProfit = (trx.netProfit !== undefined && trx.netProfit !== null && !isNaN(parseFloat(trx.netProfit)));
-            const trxHasStoredHpp = (trx.hpp !== undefined && trx.hpp !== null && !isNaN(parseFloat(trx.hpp)) && parseFloat(trx.hpp) > 0);
-            const trxTotal = parseFloat(trx.total) || 0;
-            const trxNetProfit = trxHasStoredProfit ? parseFloat(trx.netProfit) : (trxHasStoredHpp ? (trxTotal - parseFloat(trx.hpp)) : null);
-
-            // Hitung total qty dalam transaksi ini (untuk proporsi)
-            let totalQtyInTrx = 0;
-            trx.items.forEach(item => { totalQtyInTrx += (parseInt(item.qty) || 0); });
-
             trx.items.forEach(item => {
                 const name = item.Nama_Camilan || 'Unknown';
                 const qty = parseInt(item.qty) || 0;
                 if (qty <= 0) return;
 
                 const isBonus = !!item.isBonus;
-                const sellPrice = isBonus ? 0 : (parseFloat(item.editPrice) || parseFloat(item.Harga) || 0);
+                const sellPrice = isBonus ? 0 : (cleanNumber(item.editPrice) || cleanNumber(item.Harga) || 0);
+                const costPrice = this.getProductCostPrice(item);
                 const revenue = sellPrice * qty;
-
-                // Hitung profit per item: gunakan data tersimpan jika ada
-                let profit = 0;
-                if (trxNetProfit !== null && totalQtyInTrx > 0) {
-                    // Distribusikan laba secara proporsional berdasarkan qty
-                    profit = (qty / totalQtyInTrx) * trxNetProfit;
-                } else {
-                    // Fallback: hitung per item
-                    const costPrice = this.getProductCostPrice(item);
-                    profit = (sellPrice - costPrice) * qty;
-                }
+                const profit = (sellPrice - costPrice) * qty;
 
                 if (!productMap[name]) {
                     productMap[name] = { name, totalQty: 0, totalRevenue: 0, totalProfit: 0 };

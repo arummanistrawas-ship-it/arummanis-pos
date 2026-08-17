@@ -1,3 +1,56 @@
+// Helper parsing angka/mata uang tahan segala format (IDR, ribuan titik, koma desimal, teks Rp, null, undefined)
+function cleanNumber(val) {
+  if (val === null || val === undefined || val === '') return 0;
+  if (typeof val === 'number') return isNaN(val) ? 0 : val;
+  var str = val.toString().trim();
+  str = str.replace(/^(?:Rp\.?|IDR)\s*/i, '').trim();
+  if (!str) return 0;
+  
+  if (/^-?\d+$/.test(str)) return parseInt(str, 10);
+  
+  // Format Indonesia ribuan titik: "10.000" atau "1.500.000" atau "10.000,50"
+  if (/^-?\d{1,3}(\.\d{3})+(,\d+)?$/.test(str)) {
+    str = str.replace(/\./g, '').replace(',', '.');
+    return parseFloat(str) || 0;
+  }
+  
+  // Format Inggris koma: "10,000" atau "1,500,000" atau "10,000.50"
+  if (/^-?\d{1,3}(,\d{3})+(\.\d+)?$/.test(str)) {
+    str = str.replace(/,/g, '');
+    return parseFloat(str) || 0;
+  }
+  
+  if (/^-?\d+,\d+$/.test(str)) {
+    str = str.replace(',', '.');
+    return parseFloat(str) || 0;
+  }
+  
+  var cleaned = str.replace(/[^0-9.,-]/g, '');
+  if (cleaned.indexOf('.') > -1 && cleaned.indexOf(',') === -1) {
+    var parts = cleaned.split('.');
+    if (parts.length === 2 && parts[1].length === 3) {
+      return parseInt(parts[0] + parts[1], 10) || 0;
+    } else if (parts.length > 2) {
+      return parseInt(parts.join(''), 10) || 0;
+    }
+  }
+  var num = parseFloat(cleaned);
+  return isNaN(num) ? 0 : num;
+}
+
+// Helper pencari indeks kolom tahan variasi nama (spasi, underscore, kurung, huruf besar/kecil)
+function findHeaderCol(headers, candidates) {
+  if (!headers || !Array.isArray(headers)) return -1;
+  for (var c = 0; c < candidates.length; c++) {
+    var cand = candidates[c].toString().toLowerCase().replace(/[\s_\-\(\)]/g, '');
+    for (var h = 0; h < headers.length; h++) {
+      var head = (headers[h] || "").toString().toLowerCase().replace(/[\s_\-\(\)]/g, '');
+      if (head === cand) return h;
+    }
+  }
+  return -1;
+}
+
 function doGet(e) {
   var action = e.parameter.action;
   
@@ -152,10 +205,9 @@ function syncMasterProductCostsFromBatches() {
     var bHeaders = bData[0];
     
     // Temukan kolom di DatabaseProduk
-    var pBcCol = pHeaders.indexOf("Barcode_ID"); if (pBcCol === -1) pBcCol = pHeaders.indexOf("Barcode"); if (pBcCol === -1) pBcCol = 0;
-    var pNmCol = pHeaders.indexOf("Nama_Camilan"); if (pNmCol === -1) pNmCol = pHeaders.indexOf("Nama"); if (pNmCol === -1) pNmCol = 1;
-    var pModalCol = pHeaders.indexOf("Harga_Modal");
-    if (pModalCol === -1) pModalCol = pHeaders.indexOf("Harga_Beli");
+    var pBcCol = findHeaderCol(pHeaders, ["Barcode_ID", "Barcode", "Kode_Barcode", "Kode"]); if (pBcCol === -1) pBcCol = 0;
+    var pNmCol = findHeaderCol(pHeaders, ["Nama_Camilan", "Nama", "Nama_Produk", "Produk"]); if (pNmCol === -1) pNmCol = 1;
+    var pModalCol = findHeaderCol(pHeaders, ["Harga_Modal", "Harga Modal", "Harga_Beli", "Harga Beli", "Modal", "Harga Beli (Rp)", "Harga Modal (Rp)"]);
     if (pModalCol === -1) {
       // Buat kolom Harga_Modal di ujung
       pSheet.getRange(1, pLastCol + 1).setValue("Harga_Modal");
@@ -164,9 +216,9 @@ function syncMasterProductCostsFromBatches() {
     }
     
     // Temukan kolom di StokBatch
-    var bBcCol = bHeaders.indexOf("Barcode_ID"); if (bBcCol === -1) bBcCol = bHeaders.indexOf("Barcode"); if (bBcCol === -1) bBcCol = 1;
-    var bNmCol = bHeaders.indexOf("Nama_Camilan"); if (bNmCol === -1) bNmCol = bHeaders.indexOf("Nama");
-    var bBuyCol = bHeaders.indexOf("Harga_Beli"); if (bBuyCol === -1) bBuyCol = bHeaders.indexOf("Harga_Modal");
+    var bBcCol = findHeaderCol(bHeaders, ["Barcode_ID", "Barcode", "Kode_Barcode"]); if (bBcCol === -1) bBcCol = 1;
+    var bNmCol = findHeaderCol(bHeaders, ["Nama_Camilan", "Nama", "Nama_Produk"]);
+    var bBuyCol = findHeaderCol(bHeaders, ["Harga_Beli", "Harga Beli", "Harga_Modal", "Harga Modal", "Modal", "Harga Beli (Rp)", "Harga Modal (Rp)", "Harga_Kulakan"]);
     
     if (bBuyCol === -1) return "Kolom Harga_Beli di StokBatch tidak ditemukan";
     
@@ -177,7 +229,7 @@ function syncMasterProductCostsFromBatches() {
     for (var b = 1; b < bData.length; b++) {
       var bBc = bBcCol > -1 && bData[b][bBcCol] ? bData[b][bBcCol].toString().trim() : "";
       var bNm = bNmCol > -1 && bData[b][bNmCol] ? bData[b][bNmCol].toString().trim() : "";
-      var bBuy = parseFloat(bData[b][bBuyCol]) || 0;
+      var bBuy = cleanNumber(bData[b][bBuyCol]);
       
       if (bBuy > 0) {
         if (bBc !== "") {
@@ -196,7 +248,7 @@ function syncMasterProductCostsFromBatches() {
     for (var p = 1; p < pData.length; p++) {
       var pBc = pData[p][pBcCol] ? pData[p][pBcCol].toString().trim() : "";
       var pNm = pData[p][pNmCol] ? pData[p][pNmCol].toString().trim() : "";
-      var currentModal = parseFloat(pData[p][pModalCol]) || 0;
+      var currentModal = cleanNumber(pData[p][pModalCol]);
       
       var targetModal = 0;
       if (pBc !== "" && latestCostByBc[pBc.toLowerCase()]) {
@@ -386,27 +438,26 @@ function getProducts() {
   
   // Ambil data batch detail per Barcode_ID DAN Nama_Camilan dari tab StokBatch
   var stokMap = {};
-  var batchesMap = {}; // Map identifier (barcode atau nama) ke list batch aktif
-  var bBarcodeCol = bHeaders.indexOf("Barcode_ID");
-  var bNameCol = bHeaders.indexOf("Nama_Camilan");
-  var bSisaCol = bHeaders.indexOf("Stok_Sisa");
-  var bExpCol = bHeaders.indexOf("Tanggal_Expired");
-  var bBuyCol = bHeaders.indexOf("Harga_Beli");
-  var bIdCol = bHeaders.indexOf("Batch_ID");
+  var batchesMap = {};
+  var bBarcodeCol = findHeaderCol(bHeaders, ["Barcode_ID", "Barcode", "Kode"]);
+  var bNameCol = findHeaderCol(bHeaders, ["Nama_Camilan", "Nama", "Nama_Produk"]);
+  var bSisaCol = findHeaderCol(bHeaders, ["Stok_Sisa", "Stok Sisa", "Sisa", "Sisa_Stok"]);
+  var bExpCol = findHeaderCol(bHeaders, ["Tanggal_Expired", "Tanggal Expired", "Expired", "Kadaluarsa"]);
+  var bBuyCol = findHeaderCol(bHeaders, ["Harga_Beli", "Harga Beli", "Harga_Modal", "Harga Modal", "Modal", "Harga Beli (Rp)", "Harga Modal (Rp)"]);
+  var bIdCol = findHeaderCol(bHeaders, ["Batch_ID", "Batch ID", "ID_Batch", "Batch"]);
   
   if (bData.length > 1 && bSisaCol > -1) {
     for (var i = 1; i < bData.length; i++) {
       var batchBc = bBarcodeCol > -1 ? bData[i][bBarcodeCol].toString().trim() : "";
       var batchNm = bNameCol > -1 ? bData[i][bNameCol].toString().trim() : "";
       
-      // Jika kedua identifier kosong, abaikan
       if (batchBc === "" && batchNm === "") continue;
       
-      var sisa = parseInt(bData[i][bSisaCol]) || 0;
-      if (sisa <= 0) continue; // Hanya ambil batch yang masih aktif memiliki sisa stok
+      var sisa = cleanNumber(bData[i][bSisaCol]);
+      if (sisa <= 0) continue;
       
       var exp = bExpCol > -1 ? bData[i][bExpCol] : "";
-      var buy = bBuyCol > -1 ? (parseInt(bData[i][bBuyCol]) || 0) : 0;
+      var buy = bBuyCol > -1 ? cleanNumber(bData[i][bBuyCol]) : 0;
       var bid = bIdCol > -1 ? bData[i][bIdCol] : "";
       
       var batchItem = {
@@ -416,7 +467,6 @@ function getProducts() {
         hargaBeli: buy
       };
       
-      // Petakan ke Barcode jika ada
       if (batchBc !== "") {
         if (!stokMap[batchBc]) stokMap[batchBc] = 0;
         stokMap[batchBc] += sisa;
@@ -424,12 +474,10 @@ function getProducts() {
         batchesMap[batchBc].push(batchItem);
       }
       
-      // Petakan juga ke Nama Camilan agar produk tanpa barcode atau pencarian nama tetap memiliki stok
       if (batchNm !== "") {
         if (!stokMap[batchNm]) stokMap[batchNm] = 0;
         stokMap[batchNm] += sisa;
         if (!batchesMap[batchNm]) batchesMap[batchNm] = [];
-        // Hindari duplikasi jika batchBc sudah sama persis dengan batchNm
         if (batchBc === "" || batchBc !== batchNm) {
           batchesMap[batchNm].push(batchItem);
         }
@@ -438,27 +486,19 @@ function getProducts() {
   }
   
   var products = [];
-  var pBarcodeCol = pHeaders.indexOf("Barcode_ID");
-  if (pBarcodeCol === -1) pBarcodeCol = 0;
-  var pNameCol = pHeaders.indexOf("Nama_Camilan");
-  if (pNameCol === -1) pNameCol = 1;
-  var pPriceCol = pHeaders.indexOf("Harga_Jual");
-  if (pPriceCol === -1) pPriceCol = pHeaders.indexOf("Harga");
-  if (pPriceCol === -1) pPriceCol = 2;
-  var pModalCol = pHeaders.indexOf("Harga_Modal");
-  if (pModalCol === -1) pModalCol = pHeaders.indexOf("Harga_Beli");
-  var pStokCol = pHeaders.indexOf("Stok");
-  if (pStokCol === -1) pStokCol = pHeaders.indexOf("Stok_Awal");
-  if (pStokCol === -1) pStokCol = pHeaders.indexOf("Stock");
+  var pBarcodeCol = findHeaderCol(pHeaders, ["Barcode_ID", "Barcode", "Kode"]); if (pBarcodeCol === -1) pBarcodeCol = 0;
+  var pNameCol = findHeaderCol(pHeaders, ["Nama_Camilan", "Nama", "Nama_Produk"]); if (pNameCol === -1) pNameCol = 1;
+  var pPriceCol = findHeaderCol(pHeaders, ["Harga_Jual", "Harga Jual", "Harga", "Harga (Rp)", "Harga_Jual (Rp)"]); if (pPriceCol === -1) pPriceCol = 2;
+  var pModalCol = findHeaderCol(pHeaders, ["Harga_Modal", "Harga Modal", "Harga_Beli", "Harga Beli", "Modal", "Harga Beli (Rp)", "Harga Modal (Rp)"]);
+  var pStokCol = findHeaderCol(pHeaders, ["Stok", "Stok_Awal", "Stock", "Jumlah"]);
   
   for (var i = 1; i < pData.length; i++) {
     var barcode = pData[i][pBarcodeCol] ? pData[i][pBarcodeCol].toString().trim() : "";
     var name = pData[i][pNameCol] ? pData[i][pNameCol].toString().trim() : "";
-    if (!name && !barcode) continue; // Skip baris benar-benar kosong
-    var price = parseFloat(pData[i][pPriceCol]) || 0;
-    var modal = pModalCol > -1 ? (parseFloat(pData[i][pModalCol]) || 0) : 0;
+    if (!name && !barcode) continue;
+    var price = cleanNumber(pData[i][pPriceCol]);
+    var modal = pModalCol > -1 ? cleanNumber(pData[i][pModalCol]) : 0;
     
-    // Lookup stok: periksa barcode dulu, jika tidak ada/kosong, fallback ke nama produk
     var totalStok = 0;
     var productBatches = [];
     if (barcode && barcode !== "" && stokMap[barcode] !== undefined) {
@@ -468,8 +508,7 @@ function getProducts() {
       totalStok = stokMap[name];
       productBatches = batchesMap[name] || [];
     } else if (pStokCol > -1) {
-      // Fallback jika produk diisi langsung di DatabaseProduk dengan kolom Stok
-      totalStok = parseInt(pData[i][pStokCol]) || 0;
+      totalStok = cleanNumber(pData[i][pStokCol]);
       if (totalStok > 0) {
         productBatches = [{
           batchId: "B-" + Date.now() + "-" + i,
@@ -520,14 +559,13 @@ function processTransaction(transaction) {
     var bData = bSheet ? bSheet.getDataRange().getDisplayValues() : [];
     var bHeaders = bData.length > 0 ? bData[0] : [];
     
-    var bIdCol = bHeaders.indexOf("Batch_ID");
-    var bBarcodeCol = bHeaders.indexOf("Barcode_ID");
-    var bNameCol = bHeaders.indexOf("Nama_Camilan");
-    var bExpCol = bHeaders.indexOf("Tanggal_Expired");
-    var bSisaCol = bHeaders.indexOf("Stok_Sisa");
-    var bBuyCol = bHeaders.indexOf("Harga_Beli");
-    if (bBuyCol === -1) bBuyCol = bHeaders.indexOf("Harga_Modal");
-    var bStatusCol = bHeaders.indexOf("Status");
+    var bIdCol = findHeaderCol(bHeaders, ["Batch_ID", "Batch ID", "ID_Batch"]);
+    var bBarcodeCol = findHeaderCol(bHeaders, ["Barcode_ID", "Barcode", "Kode"]);
+    var bNameCol = findHeaderCol(bHeaders, ["Nama_Camilan", "Nama", "Nama_Produk"]);
+    var bExpCol = findHeaderCol(bHeaders, ["Tanggal_Expired", "Tanggal Expired", "Expired"]);
+    var bSisaCol = findHeaderCol(bHeaders, ["Stok_Sisa", "Stok Sisa", "Sisa"]);
+    var bBuyCol = findHeaderCol(bHeaders, ["Harga_Beli", "Harga Beli", "Harga_Modal", "Harga Modal", "Modal", "Harga Beli (Rp)", "Harga Modal (Rp)"]);
+    var bStatusCol = findHeaderCol(bHeaders, ["Status"]);
     
     var totalHPP = 0;
     var items = transaction.items || [];
@@ -554,14 +592,14 @@ function processTransaction(transaction) {
           }
           
           if (isMatch) {
-            var sisa = parseInt(bData[i][bSisaCol]) || 0;
+            var sisa = cleanNumber(bData[i][bSisaCol]);
             if (sisa > 0) {
               matchingBatches.push({
                 rowIndex: i + 1,
                 batchId: bIdCol > -1 ? bData[i][bIdCol] : "",
                 expiredDate: bExpCol > -1 ? parseDate(bData[i][bExpCol]) : new Date(0),
                 stokSisa: sisa,
-                hargaBeli: bBuyCol > -1 ? (parseFloat(bData[i][bBuyCol]) || 0) : 0
+                hargaBeli: bBuyCol > -1 ? cleanNumber(bData[i][bBuyCol]) : 0
               });
             }
           }
@@ -590,25 +628,34 @@ function processTransaction(transaction) {
         }
       }
       
-      // 4. Jika masih ada sisa qty (stok habis/minus), gunakan modal dari DatabaseProduk
+      // 4. Jika masih ada sisa qty (stok habis/minus), gunakan modal dari DatabaseProduk atau estimasi wajar
       if (qtyToDeduct > 0) {
         var pModal = 0;
+        var pPrice = 0;
         var pSheet = ss.getSheetByName("DatabaseProduk");
         if (pSheet) {
           var pData = pSheet.getDataRange().getDisplayValues();
           var pHeaders = pData[0];
-          var pBarcodeCol = pHeaders.indexOf("Barcode_ID"); if (pBarcodeCol === -1) pBarcodeCol = 0;
-          var pNameCol = pHeaders.indexOf("Nama_Camilan"); if (pNameCol === -1) pNameCol = 1;
-          var pModalCol = pHeaders.indexOf("Harga_Modal"); if (pModalCol === -1) pModalCol = pHeaders.indexOf("Harga_Beli");
+          var pBarcodeCol = findHeaderCol(pHeaders, ["Barcode_ID", "Barcode", "Kode"]); if (pBarcodeCol === -1) pBarcodeCol = 0;
+          var pNameCol = findHeaderCol(pHeaders, ["Nama_Camilan", "Nama", "Nama_Produk"]); if (pNameCol === -1) pNameCol = 1;
+          var pModalCol = findHeaderCol(pHeaders, ["Harga_Modal", "Harga Modal", "Harga_Beli", "Harga Beli", "Modal"]);
+          var pPriceCol = findHeaderCol(pHeaders, ["Harga_Jual", "Harga Jual", "Harga", "Harga (Rp)"]);
           
           for (var pRow = 1; pRow < pData.length; pRow++) {
             var pBc = pData[pRow][pBarcodeCol].toString().trim();
             var pNm = pData[pRow][pNameCol].toString().trim();
             if ((itemBarcode !== "" && pBc.toLowerCase() === itemBarcode.toLowerCase()) || (itemName !== "" && pNm.toLowerCase() === itemName.toLowerCase())) {
-              pModal = pModalCol > -1 ? (parseFloat(pData[pRow][pModalCol]) || 0) : 0;
+              pModal = pModalCol > -1 ? cleanNumber(pData[pRow][pModalCol]) : 0;
+              pPrice = pPriceCol > -1 ? cleanNumber(pData[pRow][pPriceCol]) : 0;
               break;
             }
           }
+        }
+        // Jika pModal masih 0, gunakan estimasi 80% dari harga normal/jual
+        if (pModal === 0 && pPrice > 0) {
+          pModal = Math.floor(pPrice * 0.8);
+        } else if (pModal === 0 && cleanNumber(item.editPrice) > 0) {
+          pModal = Math.floor(cleanNumber(item.editPrice) * 0.8);
         }
         totalHPP += qtyToDeduct * pModal;
       }
@@ -617,23 +664,25 @@ function processTransaction(transaction) {
     // Simpan detail transaksi ke database transaksi
     var detailItems = items.map(function(i) {
       var bonusTag = i.isBonus ? ' [BONUS]' : '';
-      return (i.Nama_Camilan || 'Item') + bonusTag + " (" + (i.qty || 1) + "x" + (i.editPrice || 0) + ")";
+      var pPrice = cleanNumber(i.editPrice) || cleanNumber(i.Harga) || 0;
+      return (i.Nama_Camilan || 'Item') + bonusTag + " (" + (i.qty || 1) + "x" + pPrice + ")";
     }).join(" | ");
     
-    // Hitung Laba Bersih = Total Omset Ditargetkan - Total HPP (Modal)
-    var netProfit = parseFloat(transaction.total) - totalHPP;
+    // Hitung Laba Bersih = Total Omset - Total HPP (Modal)
+    var trxTotalClean = cleanNumber(transaction.total);
+    var netProfit = trxTotalClean - totalHPP;
     
     tSheet.appendRow([
       transaction.id || ('TRX-' + Date.now()),
       transaction.timestamp || formatDate(new Date()),
       transaction.customer || 'Umum',
       detailItems,
-      transaction.subtotal || 0,
-      transaction.discount || 0,
-      transaction.total || 0,
+      cleanNumber(transaction.subtotal) || 0,
+      cleanNumber(transaction.discount) || 0,
+      trxTotalClean || 0,
       transaction.method || 'Tunai',
-      transaction.cash || 0,
-      transaction.change || 0,
+      cleanNumber(transaction.cash) || 0,
+      cleanNumber(transaction.change) || 0,
       transaction.status || 'Lunas',
       totalHPP,
       netProfit
@@ -701,15 +750,10 @@ function saveProduct(product) {
   var pData = pSheet.getDataRange().getDisplayValues();
   var pHeaders = pData[0];
   
-  var pBarcodeCol = pHeaders.indexOf("Barcode_ID");
-  if (pBarcodeCol === -1) pBarcodeCol = 0;
-  var pNameCol = pHeaders.indexOf("Nama_Camilan");
-  if (pNameCol === -1) pNameCol = 1;
-  var pPriceCol = pHeaders.indexOf("Harga_Jual");
-  if (pPriceCol === -1) pPriceCol = pHeaders.indexOf("Harga");
-  if (pPriceCol === -1) pPriceCol = 2;
-  var pModalCol = pHeaders.indexOf("Harga_Modal");
-  if (pModalCol === -1) pModalCol = pHeaders.indexOf("Harga_Beli");
+  var pBarcodeCol = findHeaderCol(pHeaders, ["Barcode_ID", "Barcode", "Kode"]); if (pBarcodeCol === -1) pBarcodeCol = 0;
+  var pNameCol = findHeaderCol(pHeaders, ["Nama_Camilan", "Nama", "Nama_Produk"]); if (pNameCol === -1) pNameCol = 1;
+  var pPriceCol = findHeaderCol(pHeaders, ["Harga_Jual", "Harga Jual", "Harga", "Harga (Rp)"]); if (pPriceCol === -1) pPriceCol = 2;
+  var pModalCol = findHeaderCol(pHeaders, ["Harga_Modal", "Harga Modal", "Harga_Beli", "Harga Beli", "Modal"]);
 
   var searchBarcode = (product.oldBarcode && product.oldBarcode !== "") ? product.oldBarcode : product.Barcode_ID;
   var exists = false;
@@ -788,15 +832,15 @@ function saveProduct(product) {
   if (stokVal > 0) {
     var bData = bSheet.getDataRange().getDisplayValues();
     var bHeaders = bData[0];
-    var bIdCol = bHeaders.indexOf("Batch_ID"); if (bIdCol === -1) bIdCol = 0;
-    var bBarcodeCol = bHeaders.indexOf("Barcode_ID"); if (bBarcodeCol === -1) bBarcodeCol = 1;
-    var bNameCol = bHeaders.indexOf("Nama_Camilan");
-    var bMasukCol = bHeaders.indexOf("Tanggal_Masuk");
-    var bExpCol = bHeaders.indexOf("Tanggal_Expired");
-    var bAwalCol = bHeaders.indexOf("Stok_Awal");
-    var bSisaCol = bHeaders.indexOf("Stok_Sisa");
-    var bBuyCol = bHeaders.indexOf("Harga_Beli");
-    var bStatusCol = bHeaders.indexOf("Status");
+    var bIdCol = findHeaderCol(bHeaders, ["Batch_ID", "Batch ID"]); if (bIdCol === -1) bIdCol = 0;
+    var bBarcodeCol = findHeaderCol(bHeaders, ["Barcode_ID", "Barcode"]); if (bBarcodeCol === -1) bBarcodeCol = 1;
+    var bNameCol = findHeaderCol(bHeaders, ["Nama_Camilan", "Nama"]);
+    var bMasukCol = findHeaderCol(bHeaders, ["Tanggal_Masuk", "Tanggal Masuk"]);
+    var bExpCol = findHeaderCol(bHeaders, ["Tanggal_Expired", "Tanggal Expired"]);
+    var bAwalCol = findHeaderCol(bHeaders, ["Stok_Awal", "Stok Awal"]);
+    var bSisaCol = findHeaderCol(bHeaders, ["Stok_Sisa", "Stok Sisa"]);
+    var bBuyCol = findHeaderCol(bHeaders, ["Harga_Beli", "Harga Beli", "Harga_Modal", "Harga Modal", "Modal"]);
+    var bStatusCol = findHeaderCol(bHeaders, ["Status"]);
     
     var barcode = product.Barcode_ID || '';
     var name = product.Nama_Camilan || '';
@@ -848,19 +892,19 @@ function getTransactions() {
   if (tData.length < 2) return successResponse([]);
   
   var headers = tData[0];
-  var idCol = headers.indexOf("ID"); if (idCol === -1) idCol = 0;
-  var timeCol = headers.indexOf("Waktu"); if (timeCol === -1) timeCol = 1;
-  var custCol = headers.indexOf("Pelanggan"); if (custCol === -1) custCol = 2;
-  var detailCol = headers.indexOf("Item (Detail)"); if (detailCol === -1) detailCol = 3;
-  var subCol = headers.indexOf("Subtotal"); if (subCol === -1) subCol = 4;
-  var discCol = headers.indexOf("Diskon"); if (discCol === -1) discCol = 5;
-  var totalCol = headers.indexOf("Total"); if (totalCol === -1) totalCol = 6;
-  var methodCol = headers.indexOf("Metode"); if (methodCol === -1) methodCol = 7;
-  var cashCol = headers.indexOf("Tunai"); if (cashCol === -1) cashCol = headers.indexOf("Uang_Bayar"); if (cashCol === -1) cashCol = 8;
-  var changeCol = headers.indexOf("Kembalian"); if (changeCol === -1) changeCol = 9;
-  var statusCol = headers.indexOf("Status"); if (statusCol === -1) statusCol = 10;
-  var hppCol = headers.indexOf("HPP"); if (hppCol === -1) hppCol = 11;
-  var profitCol = headers.indexOf("Laba_Bersih"); if (profitCol === -1) profitCol = 12;
+  var idCol = findHeaderCol(headers, ["ID", "ID_Transaksi", "No_Transaksi"]); if (idCol === -1) idCol = 0;
+  var timeCol = findHeaderCol(headers, ["Waktu", "Tanggal", "Timestamp"]); if (timeCol === -1) timeCol = 1;
+  var custCol = findHeaderCol(headers, ["Pelanggan", "Customer", "Nama_Pelanggan"]); if (custCol === -1) custCol = 2;
+  var detailCol = findHeaderCol(headers, ["Item (Detail)", "Item", "Detail", "Detail_Item"]); if (detailCol === -1) detailCol = 3;
+  var subCol = findHeaderCol(headers, ["Subtotal", "Sub_Total"]); if (subCol === -1) subCol = 4;
+  var discCol = findHeaderCol(headers, ["Diskon", "Discount", "Potongan"]); if (discCol === -1) discCol = 5;
+  var totalCol = findHeaderCol(headers, ["Total", "Grand_Total", "Total_Bayar"]); if (totalCol === -1) totalCol = 6;
+  var methodCol = findHeaderCol(headers, ["Metode", "Metode_Pembayaran", "Payment"]); if (methodCol === -1) methodCol = 7;
+  var cashCol = findHeaderCol(headers, ["Tunai", "Uang_Bayar", "Cash", "Bayar"]); if (cashCol === -1) cashCol = 8;
+  var changeCol = findHeaderCol(headers, ["Kembalian", "Change", "Kembali"]); if (changeCol === -1) changeCol = 9;
+  var statusCol = findHeaderCol(headers, ["Status", "Status_Bayar"]); if (statusCol === -1) statusCol = 10;
+  var hppCol = findHeaderCol(headers, ["HPP", "Total_HPP", "Modal"]); if (hppCol === -1) hppCol = 11;
+  var profitCol = findHeaderCol(headers, ["Laba_Bersih", "Laba", "Profit", "Net_Profit"]); if (profitCol === -1) profitCol = 12;
   
   var transactions = [];
   for (var i = 1; i < tData.length; i++) {
@@ -871,27 +915,27 @@ function getTransactions() {
     var timestamp = row[timeCol] || "";
     var customer = row[custCol] || "";
     var detailText = row[detailCol] || "";
-    var subtotal = parseFloat(row[subCol]) || 0;
-    var discount = parseFloat(row[discCol]) || 0;
-    var total = parseFloat(row[totalCol]) || 0;
+    var subtotal = cleanNumber(row[subCol]);
+    var discount = cleanNumber(row[discCol]);
+    var total = cleanNumber(row[totalCol]);
     var method = row[methodCol] || "Tunai";
-    var cash = parseFloat(row[cashCol]) || 0;
-    var changeVal = parseFloat(row[changeCol]) || 0;
+    var cash = cleanNumber(row[cashCol]);
+    var changeVal = cleanNumber(row[changeCol]);
     var status = row[statusCol] || "Lunas";
-    var hpp = hppCol > -1 ? (parseFloat(row[hppCol]) || 0) : 0;
-    var netProfit = profitCol > -1 ? (parseFloat(row[profitCol]) || 0) : 0;
+    var hpp = hppCol > -1 ? cleanNumber(row[hppCol]) : 0;
+    var netProfit = profitCol > -1 ? cleanNumber(row[profitCol]) : 0;
     
     var items = [];
     if (detailText) {
       var itemParts = detailText.split(" | ");
       itemParts.forEach(function(part) {
-        var match = part.match(/^(.+?)\s*\((?:(\d+)x([\d\.]+))\)$/);
+        var match = part.match(/^(.+?)\s*\((?:(\d+)x([\d\.,]+))\)$/);
         if (match) {
           var nameWithBonus = match[1].trim();
           var isBonus = nameWithBonus.indexOf("[BONUS]") > -1;
           var cleanName = nameWithBonus.replace(/\s*\[BONUS\]/g, "").trim();
           var qty = parseInt(match[2]) || 1;
-          var price = parseFloat(match[3]) || 0;
+          var price = cleanNumber(match[3]);
           items.push({
             Nama_Camilan: cleanName,
             qty: qty,
@@ -997,20 +1041,20 @@ function processRestock(data) {
   if (!bSheet) return errorResponse('Sheet "StokBatch" tidak ditemukan');
   
   var bHeaders = bSheet.getDataRange().getDisplayValues()[0];
-  var bIdCol = bHeaders.indexOf("Batch_ID"); if (bIdCol === -1) bIdCol = 0;
-  var bBarcodeCol = bHeaders.indexOf("Barcode_ID"); if (bBarcodeCol === -1) bBarcodeCol = 1;
-  var bNameCol = bHeaders.indexOf("Nama_Camilan");
-  var bMasukCol = bHeaders.indexOf("Tanggal_Masuk");
-  var bExpCol = bHeaders.indexOf("Tanggal_Expired");
-  var bAwalCol = bHeaders.indexOf("Stok_Awal");
-  var bSisaCol = bHeaders.indexOf("Stok_Sisa");
-  var bBuyCol = bHeaders.indexOf("Harga_Beli");
-  var bStatusCol = bHeaders.indexOf("Status");
+  var bIdCol = findHeaderCol(bHeaders, ["Batch_ID", "Batch ID"]); if (bIdCol === -1) bIdCol = 0;
+  var bBarcodeCol = findHeaderCol(bHeaders, ["Barcode_ID", "Barcode"]); if (bBarcodeCol === -1) bBarcodeCol = 1;
+  var bNameCol = findHeaderCol(bHeaders, ["Nama_Camilan", "Nama"]);
+  var bMasukCol = findHeaderCol(bHeaders, ["Tanggal_Masuk", "Tanggal Masuk"]);
+  var bExpCol = findHeaderCol(bHeaders, ["Tanggal_Expired", "Tanggal Expired"]);
+  var bAwalCol = findHeaderCol(bHeaders, ["Stok_Awal", "Stok Awal"]);
+  var bSisaCol = findHeaderCol(bHeaders, ["Stok_Sisa", "Stok Sisa"]);
+  var bBuyCol = findHeaderCol(bHeaders, ["Harga_Beli", "Harga Beli", "Harga_Modal", "Harga Modal", "Modal"]);
+  var bStatusCol = findHeaderCol(bHeaders, ["Status"]);
   
   var batchId = "B-" + Date.now();
   var tanggalMasuk = formatDate(new Date());
   var tanggalExpired = data.expired || formatDate(new Date(Date.now() + 365*24*60*60*1000));
-  var hargaBeli = data.priceBuy || 0;
+  var hargaBeli = cleanNumber(data.priceBuy) || 0;
   var barcode = data.Barcode_ID || '';
   var name = data.Nama_Camilan || '';
   
