@@ -66,6 +66,11 @@ function doGet(e) {
     return getTransactions();
   }
   
+  if (action === 'recalculate_profits') {
+    var res = recalculateTransactionProfits();
+    return successResponse(res);
+  }
+  
   return ContentService.createTextOutput(JSON.stringify({status: 'error', message: 'Action not found'}))
     .setMimeType(ContentService.MimeType.JSON);
 }
@@ -111,6 +116,7 @@ function onOpen() {
     var ui = SpreadsheetApp.getUi();
     ui.createMenu('🏪 Kasir Arummanis')
       .addItem('💰 Update Harga Modal dari Batch Terakhir', 'menuSyncMasterCosts')
+      .addItem('🔄 Hitung Ulang HPP & Laba DatabaseTransaksi', 'menuRecalculateProfits')
       .addItem('🔄 Sinkronkan Nama Produk di StokBatch', 'fixAndFillStokBatchNames')
       .addItem('🛠️ Inisialisasi & Rapikan Semua Sheet', 'initSheets')
       .addToUi();
@@ -121,6 +127,11 @@ function onOpen() {
 
 function menuSyncMasterCosts() {
   var res = syncMasterProductCostsFromBatches();
+  try { Browser.msgBox(res); } catch(e){}
+}
+
+function menuRecalculateProfits() {
+  var res = recalculateTransactionProfits();
   try { Browser.msgBox(res); } catch(e){}
 }
 
@@ -1196,3 +1207,93 @@ function deleteTransaction(data) {
   }
   return successResponse('Transaksi ' + data.id + ' tidak ditemukan di Google Sheets');
 }
+
+// Hitung ulang HPP dan Laba Bersih seluruh transaksi di DatabaseTransaksi berdasarkan Harga_Modal terbaru
+function recalculateTransactionProfits() {
+  try {
+    initSheets();
+    var ss = SpreadsheetApp.getActiveSpreadsheet();
+    var tSheet = ss.getSheetByName("DatabaseTransaksi");
+    var pSheet = ss.getSheetByName("DatabaseProduk");
+    
+    if (!tSheet || !pSheet) return "Sheet DatabaseTransaksi atau DatabaseProduk tidak ditemukan";
+    
+    var tData = tSheet.getDataRange().getDisplayValues();
+    if (tData.length < 2) return "Belum ada transaksi di DatabaseTransaksi";
+    
+    var pData = pSheet.getDataRange().getDisplayValues();
+    var pHeaders = pData[0];
+    var pBcCol = findHeaderCol(pHeaders, ["Barcode_ID", "Barcode", "Kode"]); if (pBcCol === -1) pBcCol = 0;
+    var pNmCol = findHeaderCol(pHeaders, ["Nama_Camilan", "Nama", "Nama_Produk"]); if (pNmCol === -1) pNmCol = 1;
+    var pPriceCol = findHeaderCol(pHeaders, ["Harga_Jual", "Harga Jual", "Harga", "Harga (Rp)"]); if (pPriceCol === -1) pPriceCol = 2;
+    var pModalCol = findHeaderCol(pHeaders, ["Harga_Modal", "Harga Modal", "Harga_Beli", "Harga Beli", "Modal"]);
+    
+    // Buat lookup harga modal dan harga normal produk
+    var productCostMap = {};
+    var productPriceMap = {};
+    for (var p = 1; p < pData.length; p++) {
+      var pBc = pData[p][pBcCol] ? pData[p][pBcCol].toString().trim().toLowerCase() : "";
+      var pNm = pData[p][pNmCol] ? pData[p][pNmCol].toString().trim().toLowerCase() : "";
+      var pPrice = cleanNumber(pData[p][pPriceCol]);
+      var pModal = pModalCol > -1 ? cleanNumber(pData[p][pModalCol]) : 0;
+      if (pModal === 0 && pPrice > 0) {
+        pModal = Math.floor(pPrice * 0.8);
+      }
+      if (pBc !== "") {
+        productCostMap[pBc] = pModal;
+        productPriceMap[pBc] = pPrice;
+      }
+      if (pNm !== "") {
+        productCostMap[pNm] = pModal;
+        productPriceMap[pNm] = pPrice;
+      }
+    }
+    
+    var tHeaders = tData[0];
+    var detailCol = findHeaderCol(tHeaders, ["Item (Detail)", "Item", "Detail", "Detail_Item"]); if (detailCol === -1) detailCol = 3;
+    var totalCol = findHeaderCol(tHeaders, ["Total", "Grand_Total", "Total_Bayar"]); if (totalCol === -1) totalCol = 6;
+    var hppCol = findHeaderCol(tHeaders, ["HPP", "Total_HPP", "Modal"]); if (hppCol === -1) hppCol = 11;
+    var profitCol = findHeaderCol(tHeaders, ["Laba_Bersih", "Laba", "Profit", "Net_Profit"]); if (profitCol === -1) profitCol = 12;
+    
+    var updatedCount = 0;
+    for (var i = 1; i < tData.length; i++) {
+      var row = tData[i];
+      var detailText = row[detailCol] || "";
+      var total = cleanNumber(row[totalCol]);
+      
+      var rowHPP = 0;
+      if (detailText) {
+        var itemParts = detailText.split(" | ");
+        itemParts.forEach(function(part) {
+          var match = part.match(/^(.+?)\s*\((?:(\d+)x([\d\.,]+))\)$/);
+          if (match) {
+            var nameWithBonus = match[1].trim();
+            var isBonus = nameWithBonus.indexOf("[BONUS]") > -1;
+            var cleanName = nameWithBonus.replace(/\s*\[BONUS\]/g, "").trim().toLowerCase();
+            var qty = parseInt(match[2]) || 1;
+            var itemCost = productCostMap[cleanName] !== undefined ? productCostMap[cleanName] : 0;
+            if (itemCost === 0) {
+              var itemPrice = cleanNumber(match[3]);
+              if (itemPrice > 0) itemCost = Math.floor(itemPrice * 0.8);
+            }
+            rowHPP += qty * itemCost;
+          }
+        });
+      }
+      
+      var newProfit = total - rowHPP;
+      tSheet.getRange(i + 1, hppCol + 1).setValue(rowHPP);
+      tSheet.getRange(i + 1, profitCol + 1).setValue(newProfit);
+      updatedCount++;
+    }
+    
+    SpreadsheetApp.flush();
+    var msg = "BERHASIL! Menghitung ulang HPP dan Laba Bersih untuk " + updatedCount + " transaksi di DatabaseTransaksi.";
+    Logger.log(msg);
+    return msg;
+  } catch (e) {
+    Logger.log("Error recalculateTransactionProfits: " + e);
+    return "Error: " + e.toString();
+  }
+}
+

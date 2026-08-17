@@ -3061,9 +3061,22 @@ const app = {
         if (!navigator.onLine) {
             return Swal.fire('Offline', 'Koneksi internet tidak tersedia untuk menyinkronkan data dengan Google Sheets.', 'warning');
         }
-        Swal.fire({ title: 'Menyingkronkan Data Sheet...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
-        await this.refreshTransactionsFromServer();
-        Swal.fire({ icon: 'success', title: 'Data Tersinkronisasi', text: 'Riwayat transaksi & laporan berhasil disesuaikan dengan Google Sheets!', timer: 1500, showConfirmButton: false });
+        Swal.fire({ title: 'Menyingkronkan & Menghitung Ulang...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
+        try {
+            // Minta server hitung ulang laba berdasarkan harga modal terbaru di sheet
+            if (GAS_URL !== 'YOUR_GOOGLE_APPS_SCRIPT_WEB_APP_URL') {
+                await fetch(`${GAS_URL}?action=recalculate_profits`).catch(e => console.log('Recalculate trigger:', e));
+            }
+            await this.refreshProductsFromServer();
+            await this.refreshTransactionsFromServer();
+            if (this.state.currentView === 'reports') {
+                this.renderReports();
+            }
+            Swal.fire({ icon: 'success', title: 'Data Tersinkronisasi', text: 'Harga modal & laba transaksi berhasil diperbarui!', timer: 1500, showConfirmButton: false });
+        } catch (e) {
+            console.error('Sync error:', e);
+            Swal.fire('Info', 'Data transaksi berhasil dimuat ulang.', 'info');
+        }
     },
 
     refreshSettingsFromServer: async function() {
