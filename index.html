@@ -399,6 +399,22 @@
                         <label for="reportDate">Tanggal:</label>
                         <input type="date" id="reportDate" onchange="app.renderReports()">
                     </div>
+                    <!-- Weekly date range (terkunci 7 hari) -->
+                    <div class="report-date-picker hidden" id="reportWeeklyRange">
+                        <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px; width: 100%;">
+                            <div style="flex: 1; min-width: 130px; display: flex; align-items: center; gap: 6px;">
+                                <label for="reportWeeklyFrom" style="font-size: 0.85rem; font-weight: 600; color: #64748b; white-space: nowrap;">Dari:</label>
+                                <input type="date" id="reportWeeklyFrom" onchange="app.handleWeeklyFromChange(this.value)">
+                            </div>
+                            <div style="flex: 1; min-width: 130px; display: flex; align-items: center; gap: 6px;">
+                                <label for="reportWeeklyTo" style="font-size: 0.85rem; font-weight: 600; color: #64748b; white-space: nowrap;">Sampai:</label>
+                                <input type="date" id="reportWeeklyTo" onchange="app.handleWeeklyToChange(this.value)">
+                            </div>
+                        </div>
+                        <div style="width: 100%; font-size: 0.78rem; color: var(--primary); font-weight: 600; margin-top: 4px; display: flex; align-items: center; gap: 4px;">
+                            <i class="fas fa-lock"></i> <span id="weeklyRangeLabel">Periode 7 Hari Terkunci</span>
+                        </div>
+                    </div>
                     <!-- Custom date range (hidden by default) -->
                     <div class="report-date-picker hidden" id="reportCustomRange">
                         <label for="reportDateFrom">Dari:</label>

@@ -1655,8 +1655,22 @@ const app = {
         // Auto-set default date saat pindah tab agar tidak kosong
         const dateInput = document.getElementById('reportDate');
         const today = new Date();
-        if (period === 'daily' || period === 'weekly') {
+        if (period === 'daily') {
             dateInput.value = today.toISOString().split('T')[0];
+        } else if (period === 'weekly') {
+            // Default 7 hari ke belakang (misal 11/08 s/d 17/08)
+            const toDate = new Date(today);
+            const fromDate = new Date(today);
+            fromDate.setDate(today.getDate() - 6);
+            
+            const toVal = toDate.getFullYear() + '-' + String(toDate.getMonth() + 1).padStart(2, '0') + '-' + String(toDate.getDate()).padStart(2, '0');
+            const fromVal = fromDate.getFullYear() + '-' + String(fromDate.getMonth() + 1).padStart(2, '0') + '-' + String(fromDate.getDate()).padStart(2, '0');
+            
+            const fromInput = document.getElementById('reportWeeklyFrom');
+            const toInput = document.getElementById('reportWeeklyTo');
+            if (fromInput) fromInput.value = fromVal;
+            if (toInput) toInput.value = toVal;
+            this.updateWeeklyBadgeLabel(fromVal, toVal);
         } else if (period === 'monthly') {
             dateInput.value = today.getFullYear() + '-' + String(today.getMonth() + 1).padStart(2, '0');
         } else if (period === 'yearly') {
@@ -1666,25 +1680,73 @@ const app = {
         this.renderReports();
     },
 
+    handleWeeklyFromChange: function(fromVal) {
+        if (!fromVal) return;
+        const parts = fromVal.split('-');
+        if (parts.length !== 3) return;
+        const fromDate = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+        const toDate = new Date(fromDate);
+        toDate.setDate(fromDate.getDate() + 6);
+        
+        const toVal = toDate.getFullYear() + '-' + String(toDate.getMonth() + 1).padStart(2, '0') + '-' + String(toDate.getDate()).padStart(2, '0');
+        const toInput = document.getElementById('reportWeeklyTo');
+        if (toInput) toInput.value = toVal;
+        
+        this.updateWeeklyBadgeLabel(fromVal, toVal);
+        this.renderReports();
+    },
+
+    handleWeeklyToChange: function(toVal) {
+        if (!toVal) return;
+        const parts = toVal.split('-');
+        if (parts.length !== 3) return;
+        const toDate = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
+        const fromDate = new Date(toDate);
+        fromDate.setDate(toDate.getDate() - 6);
+        
+        const fromVal = fromDate.getFullYear() + '-' + String(fromDate.getMonth() + 1).padStart(2, '0') + '-' + String(fromDate.getDate()).padStart(2, '0');
+        const fromInput = document.getElementById('reportWeeklyFrom');
+        if (fromInput) fromInput.value = fromVal;
+        
+        this.updateWeeklyBadgeLabel(fromVal, toVal);
+        this.renderReports();
+    },
+
+    updateWeeklyBadgeLabel: function(fromVal, toVal) {
+        const badge = document.getElementById('weeklyRangeLabel');
+        if (!badge || !fromVal || !toVal) return;
+        const p1 = fromVal.split('-');
+        const p2 = toVal.split('-');
+        const d1 = new Date(parseInt(p1[0]), parseInt(p1[1]) - 1, parseInt(p1[2]));
+        const d2 = new Date(parseInt(p2[0]), parseInt(p2[1]) - 1, parseInt(p2[2]));
+        const fmt1 = d1.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' });
+        const fmt2 = d2.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' });
+        badge.textContent = `Periode 7 Hari Terkunci: ${fmt1} s/d ${fmt2}`;
+    },
+
     updateDatePickerVisibility: function() {
         const period = this._reportState.period;
         const singlePicker = document.getElementById('reportDatePicker');
+        const weeklyRange = document.getElementById('reportWeeklyRange');
         const customRange = document.getElementById('reportCustomRange');
         const dateInput = document.getElementById('reportDate');
 
         if (period === 'custom') {
             singlePicker.classList.add('hidden');
+            if (weeklyRange) weeklyRange.classList.add('hidden');
             customRange.classList.remove('hidden');
-        } else {
-            singlePicker.classList.remove('hidden');
+        } else if (period === 'weekly') {
+            singlePicker.classList.add('hidden');
             customRange.classList.add('hidden');
+            if (weeklyRange) weeklyRange.classList.remove('hidden');
+        } else {
+            if (weeklyRange) weeklyRange.classList.add('hidden');
+            customRange.classList.add('hidden');
+            singlePicker.classList.remove('hidden');
 
             if (period === 'daily') {
                 dateInput.type = 'date';
                 singlePicker.querySelector('label').textContent = 'Tanggal:';
-            } else if (period === 'weekly') {
-                dateInput.type = 'date';
-                singlePicker.querySelector('label').textContent = 'Pilih tanggal dalam minggu:';
             } else if (period === 'monthly') {
                 dateInput.type = 'month';
                 singlePicker.querySelector('label').textContent = 'Bulan:';
@@ -1710,15 +1772,18 @@ const app = {
             endDate = new Date(refDate);
             endDate.setHours(23, 59, 59, 999);
         } else if (period === 'weekly') {
-            const d = new Date(refDate);
-            const day = d.getDay();
-            const diffToMonday = day === 0 ? -6 : 1 - day;
-            startDate = new Date(d);
-            startDate.setDate(d.getDate() + diffToMonday);
-            startDate.setHours(0, 0, 0, 0);
-            endDate = new Date(startDate);
-            endDate.setDate(startDate.getDate() + 6);
-            endDate.setHours(23, 59, 59, 999);
+            if (refDate && refDate.from && refDate.to) {
+                const p1 = refDate.from.split('-');
+                const p2 = refDate.to.split('-');
+                startDate = new Date(parseInt(p1[0]), parseInt(p1[1]) - 1, parseInt(p1[2]), 0, 0, 0, 0);
+                endDate = new Date(parseInt(p2[0]), parseInt(p2[1]) - 1, parseInt(p2[2]), 23, 59, 59, 999);
+            } else {
+                startDate = new Date(refDate);
+                startDate.setHours(0, 0, 0, 0);
+                endDate = new Date(startDate);
+                endDate.setDate(startDate.getDate() + 6);
+                endDate.setHours(23, 59, 59, 999);
+            }
         } else if (period === 'monthly') {
             startDate = new Date(refDate.getFullYear(), refDate.getMonth(), 1, 0, 0, 0, 0);
             endDate = new Date(refDate.getFullYear(), refDate.getMonth() + 1, 0, 23, 59, 59, 999);
@@ -1772,6 +1837,15 @@ const app = {
             prev.setDate(prev.getDate() - 1);
             return prev;
         } else if (period === 'weekly') {
+            if (refDate && refDate.from && refDate.to) {
+                const p1 = refDate.from.split('-');
+                const p2 = refDate.to.split('-');
+                const prevFromDate = new Date(parseInt(p1[0]), parseInt(p1[1]) - 1, parseInt(p1[2]) - 7);
+                const prevToDate = new Date(parseInt(p2[0]), parseInt(p2[1]) - 1, parseInt(p2[2]) - 7);
+                const prevFrom = prevFromDate.getFullYear() + '-' + String(prevFromDate.getMonth() + 1).padStart(2, '0') + '-' + String(prevFromDate.getDate()).padStart(2, '0');
+                const prevTo = prevToDate.getFullYear() + '-' + String(prevToDate.getMonth() + 1).padStart(2, '0') + '-' + String(prevToDate.getDate()).padStart(2, '0');
+                return { from: prevFrom, to: prevTo };
+            }
             const prev = new Date(refDate);
             prev.setDate(prev.getDate() - 7);
             return prev;
@@ -1792,6 +1866,10 @@ const app = {
                 from: document.getElementById('reportDateFrom').value,
                 to: document.getElementById('reportDateTo').value
             };
+        } else if (period === 'weekly') {
+            const fromVal = document.getElementById('reportWeeklyFrom')?.value;
+            const toVal = document.getElementById('reportWeeklyTo')?.value;
+            return { from: fromVal, to: toVal };
         } else if (period === 'yearly') {
             const year = parseInt(dateInput.value) || new Date().getFullYear();
             return new Date(year, 0, 1);
@@ -1803,7 +1881,7 @@ const app = {
             }
             return new Date();
         } else {
-            // daily / weekly: dateInput.value = "2026-08-17"
+            // daily
             const parts = dateInput.value.split('-');
             if (parts.length === 3) {
                 return new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, parseInt(parts[2]));
@@ -2061,25 +2139,31 @@ const app = {
                 dataMap[key] += (parseFloat(trx.total) || 0);
             });
         } else if (period === 'weekly') {
-            const dayNames = ['Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab', 'Min'];
-            const d = new Date(refDate);
-            const day = d.getDay();
-            const diffToMonday = day === 0 ? -6 : 1 - day;
-            const monday = new Date(d);
-            monday.setDate(d.getDate() + diffToMonday);
+            const dayNames = ['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'];
+            let startDate;
+            if (refDate && refDate.from) {
+                const p1 = refDate.from.split('-');
+                startDate = new Date(parseInt(p1[0]), parseInt(p1[1]) - 1, parseInt(p1[2]));
+            } else {
+                startDate = new Date(refDate);
+            }
 
             for (let i = 0; i < 7; i++) {
-                const current = new Date(monday);
-                current.setDate(monday.getDate() + i);
-                const dateStr = current.toISOString().split('T')[0];
-                labels.push(dayNames[i]);
-                dataMap[dateStr] = 0;
+                const current = new Date(startDate);
+                current.setDate(startDate.getDate() + i);
+                const dateKey = current.getFullYear() + '-' + String(current.getMonth() + 1).padStart(2, '0') + '-' + String(current.getDate()).padStart(2, '0');
+                const dayLabel = `${dayNames[current.getDay()]} (${current.getDate()}/${current.getMonth() + 1})`;
+                labels.push(dayLabel);
+                dataMap[dateKey] = 0;
             }
             const dateKeys = Object.keys(dataMap);
             transactions.forEach(trx => {
-                const trxDate = new Date(trx.timestamp).toISOString().split('T')[0];
-                if (dataMap.hasOwnProperty(trxDate)) {
-                    dataMap[trxDate] += (parseFloat(trx.total) || 0);
+                const parsed = app._parseTransactionDate(trx.timestamp);
+                if (parsed) {
+                    const trxDateKey = parsed.getFullYear() + '-' + String(parsed.getMonth() + 1).padStart(2, '0') + '-' + String(parsed.getDate()).padStart(2, '0');
+                    if (dataMap.hasOwnProperty(trxDateKey)) {
+                        dataMap[trxDateKey] += (cleanNumber(trx.total) || 0);
+                    }
                 }
             });
             // Convert to array by order
@@ -2333,7 +2417,9 @@ const app = {
             const d = new Date(dateInput.value);
             periodLabel = 'Harian — ' + d.toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
         } else if (period === 'weekly') {
-            periodLabel = 'Mingguan — Minggu ' + dateInput.value;
+            const from = document.getElementById('reportWeeklyFrom')?.value || '';
+            const to = document.getElementById('reportWeeklyTo')?.value || '';
+            periodLabel = `Mingguan (7 Hari) — ${from} s/d ${to}`;
         } else if (period === 'monthly') {
             const parts = dateInput.value.split('-');
             const d = new Date(parseInt(parts[0]), parseInt(parts[1]) - 1);
