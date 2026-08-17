@@ -151,6 +151,57 @@ const cleanNumber = (val) => {
     return isNaN(num) ? 0 : num;
 };
 
+// Daftar UUID Service Bluetooth Thermal Printer (ESC/POS & BLE UART)
+const PRINTER_SERVICES = [
+    '000018f0-0000-1000-8000-00805f9b34fb', // Standard ESC/POS
+    'e7810a71-73ae-499d-8c15-faa9aef0c3f2', // Mini POS / Goojprt / Panda
+    '0000fee7-0000-1000-8000-00805f9b34fb', // Tencent / Chinese POS
+    '0000ffe0-0000-1000-8000-00805f9b34fb', // HM-10 / CC2541 BLE UART (Sangat Populer)
+    '0000fff0-0000-1000-8000-00805f9b34fb', // MPT-II / Zjiang / Netum
+    '0000ff00-0000-1000-8000-00805f9b34fb', // Zjiang POS
+    '0000ff02-0000-1000-8000-00805f9b34fb',
+    '49535343-fe7d-4ae5-8fa9-9fafd205e455', // ISSC Transparent UART
+    '00001101-0000-1000-8000-00805f9b34fb', // SPP UUID
+    '0000ae00-0000-1000-8000-00805f9b34fb',
+    '0000af00-0000-1000-8000-00805f9b34fb'
+];
+
+// Helper pencocokan cerdas produk (Barcode, Nama, Multi-kata, Tanpa Spasi)
+function matchProductSearch(p, query) {
+    if (!p || !query) return false;
+    const cleanQuery = query.toLowerCase().trim().replace(/[\r\n\t]/g, '');
+    if (!cleanQuery) return false;
+    
+    const bc = p.Barcode_ID ? String(p.Barcode_ID).toLowerCase().trim().replace(/[\r\n\t]/g, '') : '';
+    const name = p.Nama_Camilan ? String(p.Nama_Camilan).toLowerCase().trim() : '';
+    
+    // 1. Pencocokan Barcode (tepat, scientific notation, atau mengandung)
+    if (bc && (bc === cleanQuery || compareBarcode(p.Barcode_ID, cleanQuery) || bc.includes(cleanQuery))) {
+        return true;
+    }
+    
+    // 2. Pencocokan Nama langsung
+    if (name && (name === cleanQuery || name.includes(cleanQuery))) {
+        return true;
+    }
+    
+    // 3. Pencocokan tanpa spasi (misal "arummanis" vs "Arum Manis")
+    const cleanQueryNoSpaces = cleanQuery.replace(/\s+/g, '');
+    const nameNoSpaces = name.replace(/\s+/g, '');
+    if (cleanQueryNoSpaces && nameNoSpaces.includes(cleanQueryNoSpaces)) {
+        return true;
+    }
+    
+    // 4. Pencocokan Multi-kata (seluruh kata yang diketik ada di nama atau barcode)
+    const words = cleanQuery.split(/\s+/).filter(w => w.length > 0);
+    if (words.length > 1) {
+        const allWordsMatch = words.every(w => name.includes(w) || bc.includes(w));
+        if (allWordsMatch) return true;
+    }
+    
+    return false;
+}
+
 const app = {
     state: {
         products: [],
@@ -219,6 +270,12 @@ const app = {
             }
         });
         setTimeout(() => { isInitialLoad = false; }, 500);
+        
+        // Pastikan kolom input produk selalu bersih saat app pertama kali dibuka
+        const initialManualInput = document.getElementById('manualBarcode');
+        if (initialManualInput) initialManualInput.value = '';
+        const initialSuggestions = document.getElementById('searchSuggestions');
+        if (initialSuggestions) { initialSuggestions.classList.add('hidden'); initialSuggestions.innerHTML = ''; }
         
         this.navigate(initialView, false);
         
@@ -347,6 +404,16 @@ const app = {
             backBtn.classList.remove('hidden');
             if(viewId === 'pos') { 
                 titleEl.textContent = 'Transaksi Baru'; 
+                // Selalu bersihkan kolom input produk & sugesti saat masuk menu Transaksi
+                const manualInput = document.getElementById('manualBarcode');
+                if (manualInput) {
+                    manualInput.value = '';
+                }
+                const suggestionsBox = document.getElementById('searchSuggestions');
+                if (suggestionsBox) {
+                    suggestionsBox.classList.add('hidden');
+                    suggestionsBox.innerHTML = '';
+                }
                 this.updateCartUI(); 
                 this.refreshProductsFromServer(); 
             }
@@ -560,23 +627,21 @@ const app = {
     updateProductDatalist: function() { /* no-op, search suggestions used instead */ },
 
     handleManualAdd: function() {
-        const input = document.getElementById('manualBarcode').value.trim();
+        const manualInput = document.getElementById('manualBarcode');
+        if (!manualInput) return;
+        const input = manualInput.value.trim();
         if(!input) return;
         
-        const cleanInput = input.toLowerCase().replace(/[\r\n\t]/g, '');
-        
-        // Cari produk dengan pencocokan barcode tepat, nama tepat, atau nama parsial
-        const p = this.state.products.find(x => 
-            compareBarcode(x.Barcode_ID, input) ||
-            (x.Barcode_ID && String(x.Barcode_ID).toLowerCase().trim() === cleanInput) ||
-            (x.Nama_Camilan && String(x.Nama_Camilan).toLowerCase().trim() === cleanInput) ||
-            (x.Nama_Camilan && String(x.Nama_Camilan).toLowerCase().trim().includes(cleanInput))
-        );
+        // Cari produk dengan pencocokan pintar (barcode, nama, multi-kata)
+        const p = this.state.products.find(x => matchProductSearch(x, input));
         if(p) {
             this.addToCart(p);
-            document.getElementById('manualBarcode').value = '';
+            manualInput.value = '';
             const suggestionsBox = document.getElementById('searchSuggestions');
-            if (suggestionsBox) suggestionsBox.classList.add('hidden');
+            if (suggestionsBox) {
+                suggestionsBox.classList.add('hidden');
+                suggestionsBox.innerHTML = '';
+            }
         } else {
             Swal.fire({
                 title: 'Produk Tidak Ditemukan',
@@ -712,14 +777,15 @@ const app = {
             return;
         }
 
-        const cleanTerm = term.trim().toLowerCase().replace(/[\r\n\t]/g, '');
+        // Tampilkan indikator jika database produk masih dalam proses loading dari server
+        if (!this.state.products || this.state.products.length === 0) {
+            suggestionsBox.innerHTML = '<div class="suggestion-item" style="color: #64748b; cursor: default; padding: 12px; text-align: center;"><i class="fas fa-spinner fa-spin" style="margin-right: 6px;"></i>Sedang memuat database produk...</div>';
+            suggestionsBox.classList.remove('hidden');
+            return;
+        }
 
-        const matches = this.state.products.filter(p => {
-            if (!p) return false;
-            const bc = p.Barcode_ID ? String(p.Barcode_ID).toLowerCase().trim().replace(/[\r\n\t]/g, '') : '';
-            const name = p.Nama_Camilan ? String(p.Nama_Camilan).toLowerCase().trim() : '';
-            return bc.includes(cleanTerm) || name.includes(cleanTerm) || compareBarcode(p.Barcode_ID, cleanTerm);
-        });
+        const cleanTerm = term.trim().toLowerCase().replace(/[\r\n\t]/g, '');
+        const matches = this.state.products.filter(p => matchProductSearch(p, cleanTerm));
 
         if (matches.length === 0) {
             suggestionsBox.innerHTML = '<div class="suggestion-item" style="color: #999; cursor: default; padding: 12px; text-align: center;"><i class="fas fa-search" style="margin-right: 6px; opacity: 0.5;"></i>Produk tidak ditemukan</div>';
@@ -731,7 +797,7 @@ const app = {
         const prevScroll = suggestionsBox.scrollTop;
 
         suggestionsBox.innerHTML = '';
-        matches.slice(0, 20).forEach(p => {
+        matches.slice(0, 30).forEach(p => {
             // Hitung jumlah item ini yang sudah di keranjang
             const inCart = this.state.cart.find(c => {
                 if (p.Barcode_ID && p.Barcode_ID.toString().trim() !== "") {
@@ -1347,9 +1413,16 @@ const app = {
         this.state.lastTransaction = trx;
         this.saveData();
 
-        // Kosongkan keranjang
+        // Kosongkan keranjang & bersihkan input pencarian
         this.state.cart = [];
         document.getElementById('discountValue').value = '';
+        const manualInput = document.getElementById('manualBarcode');
+        if (manualInput) manualInput.value = '';
+        const suggestionsBox = document.getElementById('searchSuggestions');
+        if (suggestionsBox) {
+            suggestionsBox.classList.add('hidden');
+            suggestionsBox.innerHTML = '';
+        }
         this.updateCartUI();
         
         this.showReceipt(trx);
@@ -1455,6 +1528,13 @@ const app = {
     newTransaction: function() {
         this.state.cart = [];
         document.getElementById('discountValue').value = '';
+        const manualInput = document.getElementById('manualBarcode');
+        if (manualInput) manualInput.value = '';
+        const suggestionsBox = document.getElementById('searchSuggestions');
+        if (suggestionsBox) {
+            suggestionsBox.classList.add('hidden');
+            suggestionsBox.innerHTML = '';
+        }
         this.updateCartUI();
         this.navigate('pos');
     },
@@ -3516,9 +3596,10 @@ const app = {
 
         if (this.state.bluetoothDevice && (this.state.bluetoothDevice.name || this.state.bluetoothDevice.id)) {
             const devName = this.state.bluetoothDevice.name || 'Printer Bluetooth';
-            badge.textContent = 'Terhubung ✓';
-            badge.className = 'status-badge bg-success';
-            nameEl.textContent = `Printer Aktif: ${devName}`;
+            const isGattConnected = this.state.bluetoothDevice.gatt && this.state.bluetoothDevice.gatt.connected;
+            badge.textContent = isGattConnected ? 'Terhubung ✓' : 'Tersimpan (Siap)';
+            badge.className = isGattConnected ? 'status-badge bg-success' : 'status-badge bg-secondary';
+            nameEl.textContent = `Printer: ${devName}`;
             if (discBtn) discBtn.classList.remove('hidden');
         } else {
             badge.textContent = 'Belum Terhubung';
@@ -3558,22 +3639,148 @@ const app = {
         this.showReceipt(dummyTrx);
     },
 
+    getBluetoothDevice: async function(forceNew = false) {
+        // 1. Gunakan device yang sudah tersimpan di state jika tidak dipaksa baru
+        if (!forceNew && this.state.bluetoothDevice) {
+            return this.state.bluetoothDevice;
+        }
+
+        // 2. Minta user pairing lewat popup browser
+        if (!navigator.bluetooth) throw new Error('Web Bluetooth tidak didukung di browser ini. Gunakan Google Chrome di Android/PC.');
+        const device = await navigator.bluetooth.requestDevice({
+            acceptAllDevices: true,
+            optionalServices: PRINTER_SERVICES
+        });
+        
+        if (device) {
+            this.state.bluetoothDevice = device;
+            this.setupBluetoothDisconnectListener(device);
+            this.updatePrinterStatusUI();
+        }
+        return device;
+    },
+
+    setupBluetoothDisconnectListener: function(device) {
+        if (!device) return;
+        device.addEventListener('gattserverdisconnected', () => {
+            console.log('Koneksi printer Bluetooth terputus.');
+            this.state.bluetoothChar = null;
+            this.updatePrinterStatusUI();
+        });
+    },
+
+    connectToPrinter: async function(retryCount = 0) {
+        let device = await this.getBluetoothDevice();
+        if (!device) throw new Error('Printer tidak dipilih.');
+
+        // Jika printer masih tersambung dan karakteristik tulis siap, gunakan langsung (instant print)
+        if (device.gatt && device.gatt.connected && this.state.bluetoothChar) {
+            return this.state.bluetoothChar;
+        }
+
+        // Hubungkan kembali ke GATT Server
+        Swal.fire({ 
+            title: 'Menghubungkan ke Printer...', 
+            html: `Menghubungkan ke <b>${device.name || 'Printer Bluetooth'}</b>...`,
+            allowOutsideClick: false, 
+            didOpen: () => Swal.showLoading() 
+        });
+
+        try {
+            // Disconnect first jika status gatt sebelumnya stuck
+            if (device.gatt && device.gatt.connected) {
+                try { device.gatt.disconnect(); } catch (e) {}
+            }
+
+            // Koneksi dengan timeout 8 detik
+            const connectPromise = device.gatt.connect();
+            const timeoutPromise = new Promise((_, reject) => 
+                setTimeout(() => reject(new Error('Koneksi timeout. Pastikan printer menyala & dekat.')), 8000)
+            );
+            const server = await Promise.race([connectPromise, timeoutPromise]);
+
+            let printChar = null;
+
+            // 1. Fast-path: Scan daftar known services printer ESC/POS & BLE UART
+            for (const serviceUuid of PRINTER_SERVICES) {
+                try {
+                    const service = await server.getPrimaryService(serviceUuid);
+                    const chars = await service.getCharacteristics();
+                    printChar = chars.find(c => c.properties.write || c.properties.writeWithoutResponse);
+                    if (printChar) break;
+                } catch (e) {
+                    continue;
+                }
+            }
+
+            // 2. Slow-path fallback: Scan seluruh primary service jika belum ketemu
+            if (!printChar) {
+                try {
+                    const services = await server.getPrimaryServices();
+                    for (const s of services) {
+                        try {
+                            const chars = await s.getCharacteristics();
+                            printChar = chars.find(c => c.properties.write || c.properties.writeWithoutResponse);
+                            if (printChar) break;
+                        } catch (e) {}
+                    }
+                } catch (e) {}
+            }
+
+            if (!printChar) throw new Error('Karakteristik Bluetooth untuk Print tidak ditemukan pada printer ini.');
+
+            this.state.bluetoothChar = printChar;
+            this.updatePrinterStatusUI();
+            Swal.close();
+            return printChar;
+
+        } catch (err) {
+            Swal.close();
+            console.error('Koneksi printer gagal:', err);
+            
+            // Auto-retry 1x jika koneksi pertama gagal
+            if (retryCount < 1) {
+                console.log('Mencoba reconnect otomatis ke printer...');
+                await new Promise(r => setTimeout(r, 800));
+                return this.connectToPrinter(retryCount + 1);
+            }
+
+            // Jika gagal setelah retry, tawarkan pairing ulang perangkat baru
+            const res = await Swal.fire({
+                title: 'Gagal Terhubung ke Printer',
+                html: `<p style="font-size:0.9rem; color:#64748b;">Tidak dapat tersambung ke <b>${device.name || 'Printer Bluetooth'}</b>.<br>Pastikan printer menyala, Bluetooth HP aktif, dan printer berada di dekat HP.</p>`,
+                icon: 'warning',
+                showCancelButton: true,
+                confirmButtonText: '🔄 Pilih Ulang Printer',
+                cancelButtonText: 'Batal',
+                confirmButtonColor: '#FF6B6B'
+            });
+
+            if (res.isConfirmed) {
+                this.state.bluetoothDevice = null;
+                this.state.bluetoothChar = null;
+                this.updatePrinterStatusUI();
+                return this.connectToPrinter(0);
+            }
+
+            throw err;
+        }
+    },
+
     testConnectPrinter: async function() {
         try {
             if (!navigator.bluetooth) {
                 return Swal.fire('Tidak Didukung', 'Web Bluetooth tidak didukung di browser ini. Gunakan Chrome di Android/PC.', 'warning');
             }
 
-            // Jika belum ada device tersimpan, panggil pairing browser
+            // Jika belum ada device tersimpan, minta user pairing
             if (!this.state.bluetoothDevice) {
-                const device = await this.getBluetoothDevice();
+                const device = await this.getBluetoothDevice(true);
                 if (!device) return;
             }
 
             const printChar = await this.connectToPrinter();
-            if (!printChar) {
-                throw new Error('Gagal mendapatkan akses cetak ke printer.');
-            }
+            if (!printChar) return;
 
             // Print test receipt via ESC/POS
             const settings = this.state.settings || { shopName: 'Kasir Manis', shopAddress: '', shopPhone: '', cashierName: 'Admin', receiptFooter: 'Terima Kasih!' };
@@ -3620,12 +3827,17 @@ const app = {
             dataBuffer.push(...encoder.encode('--------------------------------\n'));
             dataBuffer.push(...encoder.encode((settings.receiptFooter || 'Terima Kasih!') + '\n\n\n'));
 
-            // Write chunks to printer
-            const chunkSize = 100;
+            // Write chunks to printer with 80 bytes limit and 20ms delay to prevent buffer overflow
+            const chunkSize = 80;
             const fullBytes = new Uint8Array(dataBuffer);
             for (let i = 0; i < fullBytes.length; i += chunkSize) {
                 const chunk = fullBytes.slice(i, i + chunkSize);
-                await printChar.writeValue(chunk);
+                if (printChar.writeValueWithoutResponse) {
+                    await printChar.writeValueWithoutResponse(chunk).catch(async () => await printChar.writeValue(chunk));
+                } else {
+                    await printChar.writeValue(chunk);
+                }
+                await new Promise(r => setTimeout(r, 20));
             }
 
             this.updatePrinterStatusUI();
@@ -3642,81 +3854,6 @@ const app = {
                 Swal.fire('Gagal Test Print', e.message || 'Gagal terhubung ke printer Bluetooth.', 'error');
             }
         }
-    },
-
-    getBluetoothDevice: async function() {
-        // 1. Gunakan device yang sudah tersimpan di state (baik dari preload maupun pairing sebelumnya)
-        if (this.state.bluetoothDevice) {
-            return this.state.bluetoothDevice;
-        }
-
-        // 2. Jika belum ada, minta user pairing lewat popup browser. 
-        // Wajib dipanggil sinkron di awal user gesture click (tanpa await sebelumnya) agar tidak diblokir browser.
-        if (!navigator.bluetooth) throw new Error('Web Bluetooth tidak didukung di browser ini.');
-        const device = await navigator.bluetooth.requestDevice({
-            acceptAllDevices: true,
-            optionalServices: ['000018f0-0000-1000-8000-00805f9b34fb', 'e7810a71-73ae-499d-8c15-faa9aef0c3f2', '0000fee7-0000-1000-8000-00805f9b34fb']
-        });
-        
-        if (device) {
-            this.state.bluetoothDevice = device;
-            this.setupBluetoothDisconnectListener(device);
-        }
-        return device;
-    },
-
-    setupBluetoothDisconnectListener: function(device) {
-        device.addEventListener('gattserverdisconnected', () => {
-            console.log('Koneksi printer Bluetooth terputus.');
-            this.state.bluetoothChar = null;
-        });
-    },
-
-    connectToPrinter: async function() {
-        const device = await this.getBluetoothDevice();
-        if (!device) throw new Error('Printer tidak dipilih.');
-
-        // Jika printer masih tersambung dan karakteristik tulis siap, gunakan langsung (instant print)
-        if (device.gatt.connected && this.state.bluetoothChar) {
-            return this.state.bluetoothChar;
-        }
-
-        // Hubungkan kembali ke GATT Server (tanpa popup pairing browser ulang)
-        Swal.fire({ title: 'Menghubungkan ke Printer...', allowOutsideClick: false, didOpen: () => Swal.showLoading() });
-        const server = await device.gatt.connect();
-        
-        let printChar = null;
-        const knownServices = ['000018f0-0000-1000-8000-00805f9b34fb', 'e7810a71-73ae-499d-8c15-faa9aef0c3f2', '0000fee7-0000-1000-8000-00805f9b34fb'];
-        
-        // Fast-path: Coba dapatkan primary service yang dikenal secara langsung (Sangat cepat <1 detik)
-        for (const serviceUuid of knownServices) {
-            try {
-                const service = await server.getPrimaryService(serviceUuid);
-                const chars = await service.getCharacteristics();
-                printChar = chars.find(c => c.properties.write || c.properties.writeWithoutResponse);
-                if (printChar) break;
-            } catch (e) {
-                // Lanjut ke UUID berikutnya jika service tidak ada
-                continue;
-            }
-        }
-        
-        // Slow-path fallback: Jika fast-path gagal, scan seluruh primary service (kompatibilitas 100% printer lain)
-        if (!printChar) {
-            console.log("Fast-path Bluetooth gagal, memindai seluruh service...");
-            const services = await server.getPrimaryServices();
-            for (const s of services) {
-                const chars = await s.getCharacteristics();
-                printChar = chars.find(c => c.properties.write || c.properties.writeWithoutResponse);
-                if (printChar) break;
-            }
-        }
-        
-        if (!printChar) throw new Error('Karakteristik Bluetooth untuk Print tidak ditemukan.');
-        
-        this.state.bluetoothChar = printChar;
-        Swal.close();
-        return printChar;
     },
 
     printReceipt: async function() {
@@ -3900,11 +4037,17 @@ const app = {
                 offset += arr.length;
             });
 
-            for (let i = 0; i < finalBytes.length; i += 256) {
-                await printChar.writeValue(finalBytes.slice(i, i + 256));
-                await new Promise(r => setTimeout(r, 50));
+            const chunkSize = 80;
+            for (let i = 0; i < finalBytes.length; i += chunkSize) {
+                const chunk = finalBytes.slice(i, i + chunkSize);
+                if (printChar.writeValueWithoutResponse) {
+                    await printChar.writeValueWithoutResponse(chunk).catch(async () => await printChar.writeValue(chunk));
+                } else {
+                    await printChar.writeValue(chunk);
+                }
+                await new Promise(r => setTimeout(r, 20));
             }
-            Swal.fire('Berhasil', 'Struk dicetak', 'success');
+            Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: 'Struk berhasil dicetak', showConfirmButton: false, timer: 2000 });
         } catch (e) {
             if (e.name !== 'NotFoundError') Swal.fire('Gagal', e.message, 'error');
         }
