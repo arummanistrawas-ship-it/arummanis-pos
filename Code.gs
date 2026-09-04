@@ -38,6 +38,27 @@ function cleanNumber(val) {
   return isNaN(num) ? 0 : num;
 }
 
+// Normalisasi qty berbayar & bonus per item (mirror _itemQtys di app.js).
+// Kompatibel format lama: isBonus true tanpa bonusQty = seluruh qty adalah bonus gratis.
+function itemQtys(item) {
+  if (!item) return { paid: 0, bonus: 0, total: 0, unit: 0, lineRevenue: 0 };
+  var paid = parseInt(item.qty) || 0;
+  var bonus = parseInt(item.bonusQty) || 0;
+  if (item.isBonus && (item.bonusQty === undefined || item.bonusQty === null)) {
+    bonus = paid; paid = 0;
+  }
+  var unit;
+  if (item.editPrice !== undefined && item.editPrice !== null && item.editPrice !== '') {
+    unit = cleanNumber(item.editPrice);
+  } else {
+    unit = cleanNumber(item.Harga) || 0;
+  }
+  if (unit === 0 && item.isBonus && item.originalPrice !== undefined) {
+    unit = cleanNumber(item.originalPrice);
+  }
+  return { paid: paid, bonus: bonus, total: paid + bonus, unit: unit, lineRevenue: paid * unit };
+}
+
 // Helper pencari indeks kolom tahan variasi nama (spasi, underscore, kurung, huruf besar/kecil)
 function findHeaderCol(headers, candidates) {
   if (!headers || !Array.isArray(headers)) return -1;
@@ -616,9 +637,11 @@ function processTransaction(transaction) {
     var totalHPP = 0;
     var items = transaction.items || [];
 
-    // Lakukan FIFO untuk setiap item yang dibeli & hitung HPP aktual
+    // Lakukan FIFO untuk setiap item yang dibeli & hitung HPP aktual.
+    // Total pcs = berbayar + bonus (keduanya keluar dari stok & punya modal/HPP).
     items.forEach(function(item) {
-      var qtyToDeduct = parseInt(item.qty) || 0;
+      var iq = itemQtys(item);
+      var qtyToDeduct = iq.total;
       if (qtyToDeduct <= 0) return;
       var matchingBatches = [];
       
@@ -707,11 +730,13 @@ function processTransaction(transaction) {
       }
     });
 
-    // Simpan detail transaksi ke database transaksi
+    // Simpan detail transaksi. Format: "Nama (paidQtyxHarga +bonusQty bonus)"
     var detailItems = items.map(function(i) {
-      var bonusTag = i.isBonus ? ' [BONUS]' : '';
-      var pPrice = cleanNumber(i.editPrice) || cleanNumber(i.Harga) || 0;
-      return (i.Nama_Camilan || 'Item') + bonusTag + " (" + (i.qty || 1) + "x" + pPrice + ")";
+      var iq = itemQtys(i);
+      var s = (i.Nama_Camilan || 'Item') + " (" + iq.paid + "x" + iq.unit;
+      if (iq.bonus > 0) s += " +" + iq.bonus + " bonus";
+      s += ")";
+      return s;
     }).join(" | ");
     
     // Hitung Laba Bersih = Total Omset - Total HPP (Modal)
@@ -987,21 +1012,26 @@ function getTransactions() {
     if (detailText) {
       var itemParts = detailText.split(" | ");
       itemParts.forEach(function(part) {
-        var match = part.match(/^(.+?)\s*\((?:(\d+)x([\d\.,]+))\)$/);
+        // Format baru: "Nama (3x15000 +1 bonus)"  |  Format lama: "Nama [BONUS] (3x15000)"
+        var match = part.match(/^(.+?)\s*\((\d+)x([\d\.,]+)(?:\s*\+(\d+)\s*bonus)?\)$/i);
         if (match) {
-          var nameWithBonus = match[1].trim();
-          var isBonus = nameWithBonus.indexOf("[BONUS]") > -1;
-          var cleanName = nameWithBonus.replace(/\s*\[BONUS\]/g, "").trim();
-          var qty = parseInt(match[2]) || 1;
+          var nameRaw = match[1].trim();
+          var oldFullBonus = nameRaw.indexOf("[BONUS]") > -1;
+          var cleanName = nameRaw.replace(/\s*\[BONUS\]/g, "").trim();
+          var paid = parseInt(match[2]) || 0;
           var price = cleanNumber(match[3]);
+          var bonus = match[4] ? (parseInt(match[4]) || 0) : 0;
+          // Kompat lama: [BONUS] berarti seluruh qty gratis
+          if (oldFullBonus) { bonus = paid; paid = 0; }
           items.push({
             Nama_Camilan: cleanName,
-            qty: qty,
+            qty: paid,
+            bonusQty: bonus,
             editPrice: price,
-            isBonus: isBonus
+            isBonus: (paid === 0 && bonus > 0)
           });
         } else {
-          items.push({ Nama_Camilan: part, qty: 1, editPrice: 0 });
+          items.push({ Nama_Camilan: part, qty: 1, bonusQty: 0, editPrice: 0 });
         }
       });
     }
@@ -1366,18 +1396,22 @@ function recalculateTransactionProfits() {
       if (detailText) {
         var itemParts = detailText.split(" | ");
         itemParts.forEach(function(part) {
-          var match = part.match(/^(.+?)\s*\((?:(\d+)x([\d\.,]+))\)$/);
+          // Format baru "Nama (3x15000 +1 bonus)" & lama "Nama [BONUS] (3x15000)"
+          var match = part.match(/^(.+?)\s*\((\d+)x([\d\.,]+)(?:\s*\+(\d+)\s*bonus)?\)$/i);
           if (match) {
-            var nameWithBonus = match[1].trim();
-            var isBonus = nameWithBonus.indexOf("[BONUS]") > -1;
-            var cleanName = nameWithBonus.replace(/\s*\[BONUS\]/g, "").trim().toLowerCase();
-            var qty = parseInt(match[2]) || 1;
+            var nameRaw = match[1].trim();
+            var oldFullBonus = nameRaw.indexOf("[BONUS]") > -1;
+            var cleanName = nameRaw.replace(/\s*\[BONUS\]/g, "").trim().toLowerCase();
+            var paid = parseInt(match[2]) || 0;
+            var bonus = match[4] ? (parseInt(match[4]) || 0) : 0;
+            if (oldFullBonus) { bonus = paid; paid = 0; }
+            var totalPcs = paid + bonus; // modal dihitung utk semua pcs (berbayar + bonus)
             var itemCost = productCostMap[cleanName] !== undefined ? productCostMap[cleanName] : 0;
             if (itemCost === 0) {
               var itemPrice = cleanNumber(match[3]);
               if (itemPrice > 0) itemCost = Math.floor(itemPrice * 0.8);
             }
-            rowHPP += qty * itemCost;
+            rowHPP += totalPcs * itemCost;
           }
         });
       }

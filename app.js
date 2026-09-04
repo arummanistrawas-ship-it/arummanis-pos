@@ -667,7 +667,8 @@ const app = {
             return x.Nama_Camilan === product.Nama_Camilan;
         });
 
-        const qtyInCart = existing ? existing.qty : 0;
+        // Total pcs di keranjang = berbayar + bonus (keduanya mengurangi stok)
+        const qtyInCart = existing ? ((parseInt(existing.qty) || 0) + (parseInt(existing.bonusQty) || 0)) : 0;
         const willExceed = qtyInCart >= currentStok;
 
         // Jika stok habis/melebihi DAN belum di-override → tanya kasir
@@ -698,9 +699,9 @@ const app = {
         }
 
         if(existing) {
-            existing.qty += 1;
+            existing.qty = (parseInt(existing.qty) || 0) + 1;
         } else {
-            this.state.cart.push({ ...product, qty: 1, editPrice: parseInt(product.Harga) });
+            this.state.cart.push({ ...product, qty: 1, bonusQty: 0, editPrice: parseInt(product.Harga) || 0 });
         }
         this.updateCartUI();
 
@@ -725,21 +726,22 @@ const app = {
         }
     },
 
-    toggleCartBonus: function(identifier) {
-        const item = this.state.cart.find(x => 
-            (x.Barcode_ID && compareBarcode(x.Barcode_ID, identifier)) || 
+    // Ubah jumlah bonus (gratis) sebuah item di keranjang. delta = +1 / -1.
+    adjustBonusQty: function(identifier, delta) {
+        const item = this.state.cart.find(x =>
+            (x.Barcode_ID && compareBarcode(x.Barcode_ID, identifier)) ||
             (x.Nama_Camilan === identifier.toString())
         );
-        if (item) {
-            item.isBonus = !item.isBonus;
-            if (item.isBonus) {
-                item.originalPrice = item.originalPrice !== undefined ? item.originalPrice : (item.editPrice || parseInt(item.Harga) || 0);
-                item.editPrice = 0;
-            } else {
-                item.editPrice = item.originalPrice !== undefined ? item.originalPrice : (parseInt(item.Harga) || 0);
+        if (!item) return;
+        // Normalisasi bila item ini masih format bonus lama (seluruh baris gratis)
+        if (item.isBonus) {
+            item.isBonus = false;
+            if ((!item.editPrice || item.editPrice === 0) && item.originalPrice !== undefined) {
+                item.editPrice = parseInt(item.originalPrice) || 0;
             }
-            this.updateCartUI();
         }
+        item.bonusQty = Math.max(0, (parseInt(item.bonusQty) || 0) + delta);
+        this.updateCartUI();
     },
 
     updateCartItem: function(identifier, field, value) {
@@ -810,7 +812,7 @@ const app = {
                 }
                 return c.Nama_Camilan === p.Nama_Camilan;
             });
-            const qtyInCart = inCart ? inCart.qty : 0;
+            const qtyInCart = inCart ? ((parseInt(inCart.qty) || 0) + (parseInt(inCart.bonusQty) || 0)) : 0;
             const currentStok = parseInt(p.Stok) || 0;
             const sisaStok = currentStok - qtyInCart;
 
@@ -858,20 +860,24 @@ const app = {
                 item.editPrice = Math.max(0, val);
             } else if (field === 'qty') {
                 item.qty = Math.max(0, val);
+            } else if (field === 'bonusQty') {
+                item.bonusQty = Math.max(0, val);
             }
-            
-            // Hitung ulang total tanpa rebuild list DOM
+
+            // Hitung ulang total tanpa rebuild list DOM (pendapatan = qty berbayar × harga; item = berbayar + bonus)
             let subtotal = 0;
             let count = 0;
             this.state.cart.forEach(i => {
-                subtotal += i.editPrice * i.qty;
-                count += i.qty;
+                const q = this._itemQtys(i);
+                subtotal += q.lineRevenue;
+                count += q.total;
             });
-            
+
             // Update subtotal per baris
+            const thisQ = this._itemQtys(item);
             const rowTotalEl = el.closest('.cart-item').querySelector('.item-header span:last-child');
-            if (rowTotalEl) rowTotalEl.textContent = formatRupiah(item.editPrice * item.qty);
-            
+            if (rowTotalEl) rowTotalEl.textContent = formatRupiah(thisQ.lineRevenue);
+
             // Hitung Diskon (C3 Fix: clamp negative discounts)
             const dType = document.getElementById('discountType').value;
             const dVal = Math.max(0, parseInt(document.getElementById('discountValue').value) || 0);
@@ -928,32 +934,46 @@ const app = {
             document.getElementById('processCheckoutBtn').disabled = false;
             
             this.state.cart.forEach(item => {
-                subtotal += (item.editPrice || 0) * item.qty;
-                count += item.qty;
-                
+                const q = this._itemQtys(item);
+                // Normalisasi item bonus format lama ke model baru saat dirender agar UI konsisten
+                if (item.isBonus) {
+                    item.isBonus = false;
+                    item.qty = q.paid;
+                    item.bonusQty = q.bonus;
+                    item.editPrice = q.unit;
+                }
+                const paidQty = parseInt(item.qty) || 0;
+                const bonusQty = parseInt(item.bonusQty) || 0;
+                subtotal += (item.editPrice || 0) * paidQty;
+                count += paidQty + bonusQty;
+
                 const div = document.createElement('div');
                 div.className = 'cart-item';
                 const idKey = (item.Barcode_ID && item.Barcode_ID.toString().trim() !== "") ? item.Barcode_ID.toString().trim() : item.Nama_Camilan;
-                const isBonus = !!item.isBonus;
-                const priceDisplay = isBonus ? '<span style="background:#8b5cf6; color:white; padding:1px 6px; border-radius:4px; font-size:0.75rem; font-weight:700;">BONUS</span> Rp 0' : formatRupiah(item.editPrice * item.qty);
-                const bonusBtnStyle = isBonus ? 'background:#8b5cf6; color:white; border:none; border-radius:6px; padding:2px 8px; font-size:0.75rem; font-weight:700; cursor:pointer;' : 'background:#f1f5f9; color:#64748b; border:1px solid #cbd5e1; border-radius:6px; padding:2px 8px; font-size:0.75rem; font-weight:600; cursor:pointer;';
+                const bonusBadge = bonusQty > 0 ? ` <span style="background:#8b5cf6; color:white; padding:1px 6px; border-radius:4px; font-size:0.72rem; font-weight:700;">🎁 +${bonusQty} GRATIS</span>` : '';
 
                 div.innerHTML = `
                     <div class="item-header">
-                        <span>${item.Nama_Camilan} ${isBonus ? '<span style="color:#8b5cf6; font-weight:700; font-size:0.8rem;">[BONUS]</span>' : ''}</span>
-                        <span>${priceDisplay}</span>
+                        <span>${item.Nama_Camilan}${bonusBadge}</span>
+                        <span>${formatRupiah((item.editPrice || 0) * paidQty)}</span>
                     </div>
                     <div class="item-editor">
-                        <button style="${bonusBtnStyle}" onclick="app.toggleCartBonus('${idKey}')" title="Tandai sebagai item bonus gratis">${isBonus ? '★ Bonus' : '+ Bonus'}</button>
-                        <label style="margin-left:4px;">Rp</label>
-                        <input type="number" value="${item.editPrice}" ${isBonus ? 'disabled' : ''} oninput="app.updateCartItemVal('${idKey}', 'price', this)" onblur="app.cleanCartItemInput('${idKey}', 'price', this)" style="width:65px;">
+                        <label>Rp</label>
+                        <input type="number" value="${item.editPrice}" oninput="app.updateCartItemVal('${idKey}', 'price', this)" onblur="app.cleanCartItemInput('${idKey}', 'price', this)" style="width:65px;">
                         <label>x</label>
                         <div class="qty-controls">
-                            <button class="qty-btn" onclick="app.updateCartItem('${idKey}', 'qty', ${item.qty - 1})">-</button>
-                            <input type="number" class="qty-input" value="${item.qty}" oninput="app.updateCartItemVal('${idKey}', 'qty', this)" onblur="app.cleanCartItemInput('${idKey}', 'qty', this)">
-                            <button class="qty-btn" onclick="app.updateCartItem('${idKey}', 'qty', ${item.qty + 1})">+</button>
+                            <button class="qty-btn" onclick="app.updateCartItem('${idKey}', 'qty', ${paidQty - 1})">-</button>
+                            <input type="number" class="qty-input" value="${paidQty}" oninput="app.updateCartItemVal('${idKey}', 'qty', this)" onblur="app.cleanCartItemInput('${idKey}', 'qty', this)">
+                            <button class="qty-btn" onclick="app.updateCartItem('${idKey}', 'qty', ${paidQty + 1})">+</button>
                             <button class="qty-btn del" onclick="app.removeCartItem('${idKey}')"><i class="fas fa-trash"></i></button>
                         </div>
+                    </div>
+                    <div class="bonus-editor" style="display:flex; align-items:center; gap:6px; margin-top:6px; padding-top:6px; border-top:1px dashed #e2e8f0; font-size:0.82rem;">
+                        <span style="color:#8b5cf6; font-weight:600;">🎁 Bonus gratis:</span>
+                        <button class="qty-btn" onclick="app.adjustBonusQty('${idKey}', -1)">-</button>
+                        <input type="number" class="qty-input" value="${bonusQty}" min="0" oninput="app.updateCartItemVal('${idKey}', 'bonusQty', this)" style="width:44px;">
+                        <button class="qty-btn" onclick="app.adjustBonusQty('${idKey}', 1)">+</button>
+                        <span style="color:#94a3b8;">pcs</span>
                     </div>
                 `;
                 container.appendChild(div);
@@ -1373,11 +1393,13 @@ const app = {
         const batchDeductions = [];
         let localHPP = 0;
         trx.items.forEach(item => {
-            const itemQty = parseInt(item.qty) || 0;
+            // Total pcs = berbayar (qty) + bonus (gratis). Keduanya mengurangi stok & punya modal (HPP).
+            const iq = this._itemQtys(item);
+            const itemQty = iq.total;
             let remainingForHpp = itemQty; // qty yang belum tertutup oleh batch (untuk fallback modal)
             const p = findProduct(this.state.products, item.Barcode_ID, item.Nama_Camilan);
             if(p) {
-                p.Stok = parseInt(p.Stok) - item.qty;
+                p.Stok = parseInt(p.Stok) - itemQty;
                 if(p.Stok <= 0) p.Status = 'Habis';
 
                 // Kurangi stok batch lokal secara FIFO
@@ -1470,14 +1492,14 @@ const app = {
         
         if (trx.items && trx.items.length > 0) {
             trx.items.forEach(i => {
-                const isBonus = !!i.isBonus;
-                const bonusBadge = isBonus ? ' <span style="background:#8b5cf6; color:white; padding:1px 5px; border-radius:4px; font-size:0.75rem; font-weight:bold;">[BONUS]</span>' : '';
-                const subTxt = isBonus ? `${i.qty} x Rp 0 (Bonus)` : `${i.qty} x ${formatRupiah(i.editPrice)}`;
-                const priceTxt = isBonus ? 'Rp 0' : formatRupiah(i.qty * i.editPrice);
-                html += `
-                    <div>${i.Nama_Camilan}${bonusBadge}</div>
-                    <div class="r-row"><span>${subTxt}</span> <span>${priceTxt}</span></div>
-                `;
+                const iq = this._itemQtys(i);
+                html += `<div>${i.Nama_Camilan}</div>`;
+                if (iq.paid > 0) {
+                    html += `<div class="r-row"><span>${iq.paid} x ${formatRupiah(iq.unit)}</span> <span>${formatRupiah(iq.lineRevenue)}</span></div>`;
+                }
+                if (iq.bonus > 0) {
+                    html += `<div class="r-row"><span style="color:#8b5cf6;">🎁 Bonus ${iq.bonus} pcs</span> <span style="color:#8b5cf6; font-weight:bold;">GRATIS</span></div>`;
+                }
             });
         } else {
             html += `<div style="text-align: center; color: #999; margin: 10px 0;">Tidak ada detail item (Hanya nominal transaksi)</div>`;
@@ -1560,11 +1582,11 @@ const app = {
             cancelButtonText: 'Batal'
         }).then((res) => {
             if(res.isConfirmed) {
-                // 1. Kembalikan stok produk lokal
+                // 1. Kembalikan stok produk lokal (berbayar + bonus)
                 trx.items.forEach(item => {
                     const p = findProduct(this.state.products, item.Barcode_ID, item.Nama_Camilan);
                     if(p) {
-                        p.Stok = parseInt(p.Stok) + item.qty;
+                        p.Stok = parseInt(p.Stok) + this._itemQtys(item).total;
                         if(p.Status === 'Habis') p.Status = 'Ready';
                     }
                 });
@@ -1898,6 +1920,30 @@ const app = {
         }
     },
 
+    // Normalisasi qty berbayar & bonus per item. Kompatibel dengan format lama (isBonus = seluruh baris gratis).
+    // Mengembalikan: paid (dibayar), bonus (gratis), total (stok terpakai), unit (harga satuan), lineRevenue (paid*unit)
+    _itemQtys: function(item) {
+        if (!item) return { paid: 0, bonus: 0, total: 0, unit: 0, lineRevenue: 0 };
+        let paid = parseInt(item.qty) || 0;
+        let bonus = parseInt(item.bonusQty) || 0;
+        // Format lama: isBonus true tanpa bonusQty berarti SELURUH qty adalah bonus gratis
+        if (item.isBonus && (item.bonusQty === undefined || item.bonusQty === null)) {
+            bonus = paid;
+            paid = 0;
+        }
+        // Harga satuan: pakai editPrice bila terdefinisi; fallback originalPrice (item bonus lama) lalu Harga
+        let unit;
+        if (item.editPrice !== undefined && item.editPrice !== null && item.editPrice !== '') {
+            unit = cleanNumber(item.editPrice);
+        } else {
+            unit = cleanNumber(item.Harga) || 0;
+        }
+        if (unit === 0 && item.isBonus && item.originalPrice !== undefined) {
+            unit = cleanNumber(item.originalPrice);
+        }
+        return { paid: paid, bonus: bonus, total: paid + bonus, unit: unit, lineRevenue: paid * unit };
+    },
+
     getProductCostPrice: function(item) {
         if (!item) return 0;
         const p = findProduct(this.state.products, item.Barcode_ID, item.Nama_Camilan);
@@ -1945,10 +1991,10 @@ const app = {
             omset += trxTotal;
             totalDiskon += trxDisc;
 
-            // Hitung total item
+            // Hitung total item (berbayar + bonus, karena keduanya barang yang keluar)
             if (trx.items && Array.isArray(trx.items)) {
                 trx.items.forEach(item => {
-                    totalItems += (parseInt(item.qty) || 0);
+                    totalItems += this._itemQtys(item).total;
                 });
             }
 
@@ -1967,10 +2013,10 @@ const app = {
                 let hasItemCosts = false;
                 if (trx.items && Array.isArray(trx.items) && trx.items.length > 0) {
                     trx.items.forEach(item => {
-                        const qty = parseInt(item.qty) || 0;
+                        const totalPcs = this._itemQtys(item).total; // modal dihitung utk berbayar + bonus
                         const costPrice = this.getProductCostPrice(item);
                         if (costPrice > 0) hasItemCosts = true;
-                        trxHpp += costPrice * qty;
+                        trxHpp += costPrice * totalPcs;
                     });
                 }
                 if (hasItemCosts && trxHpp > 0) {
@@ -2080,19 +2126,17 @@ const app = {
 
             trx.items.forEach(item => {
                 const name = item.Nama_Camilan || 'Unknown';
-                const qty = parseInt(item.qty) || 0;
-                if (qty <= 0) return;
+                const iq = this._itemQtys(item); // paid, bonus, total, unit
+                if (iq.total <= 0) return;
 
-                const isBonus = !!item.isBonus;
-                const sellPrice = isBonus ? 0 : (cleanNumber(item.editPrice) || cleanNumber(item.Harga) || 0);
                 const costPrice = this.getProductCostPrice(item);
-                const revenue = sellPrice * qty;
-                const profit = (sellPrice - costPrice) * qty;
+                const revenue = iq.lineRevenue;                 // hanya qty berbayar × harga
+                const profit = revenue - (costPrice * iq.total); // modal semua pcs (termasuk bonus) mengurangi laba
 
                 if (!productMap[name]) {
                     productMap[name] = { name, totalQty: 0, totalRevenue: 0, totalProfit: 0 };
                 }
-                productMap[name].totalQty += qty;
+                productMap[name].totalQty += iq.total;          // pcs terjual = berbayar + bonus
                 productMap[name].totalRevenue += revenue;
                 productMap[name].totalProfit += profit;
             });
@@ -3673,7 +3717,10 @@ const app = {
         text += `Pel  : ${trx.customer}\n`;
         text += `━━━━━━━━━━━━━━━━━━━━\n`;
         trx.items.forEach(i => {
-            text += `${i.Nama_Camilan}\n  ${i.qty} x ${formatRupiah(i.editPrice)} = ${formatRupiah(i.qty * i.editPrice)}\n`;
+            const iq = app._itemQtys(i);
+            text += `${i.Nama_Camilan}\n`;
+            if (iq.paid > 0) text += `  ${iq.paid} x ${formatRupiah(iq.unit)} = ${formatRupiah(iq.lineRevenue)}\n`;
+            if (iq.bonus > 0) text += `  🎁 Bonus ${iq.bonus} pcs = GRATIS\n`;
         });
         text += `━━━━━━━━━━━━━━━━━━━━\n`;
         text += `Subtotal : ${formatRupiah(trx.subtotal)}\n`;
@@ -4236,14 +4283,16 @@ const app = {
             bodyTxt += `   No   : ${trx.id}\n   Tgl  : ${(app._parseTransactionDate(trx.timestamp) || new Date(trx.timestamp)).toLocaleString('id-ID')}\n   Kasir: ${settings.cashierName || 'Admin'}\n   Pel  : ${trx.customer}\n`;
             bodyTxt += "   ----------------------------\n";
             
-            // Items list
+            // Items list (baris berbayar + baris bonus terpisah)
             trx.items.forEach(i => {
-                const isBonus = !!i.isBonus;
-                const nameText = isBonus ? `${i.Nama_Camilan} [BONUS]` : i.Nama_Camilan;
-                bodyTxt += `   ${nameText}\n`;
-                const left = isBonus ? `${i.qty} x Rp 0 (BONUS)` : `${i.qty} x ${formatRupiah(i.editPrice)}`;
-                const right = isBonus ? "Rp 0" : formatRupiah(i.qty * i.editPrice);
-                bodyTxt += "   " + makePrintRow(left, right, 28);
+                const iq = this._itemQtys(i);
+                bodyTxt += `   ${i.Nama_Camilan}\n`;
+                if (iq.paid > 0) {
+                    bodyTxt += "   " + makePrintRow(`${iq.paid} x ${formatRupiah(iq.unit)}`, formatRupiah(iq.lineRevenue), 28);
+                }
+                if (iq.bonus > 0) {
+                    bodyTxt += "   " + makePrintRow(`Bonus ${iq.bonus} pcs`, "GRATIS", 28);
+                }
             });
             bodyTxt += "   ----------------------------\n";
             
@@ -4419,8 +4468,11 @@ const app = {
             card.className = 'card mb-1';
             card.style.position = 'relative';
             
-            const itemCount = trx.items.reduce((sum, i) => sum + i.qty, 0);
-            const itemSummary = trx.items.map(i => `${i.Nama_Camilan} (${i.qty}x)`).join(', ');
+            const itemCount = trx.items.reduce((sum, i) => sum + this._itemQtys(i).total, 0);
+            const itemSummary = trx.items.map(i => {
+                const iq = this._itemQtys(i);
+                return `${i.Nama_Camilan} (${iq.paid}x${iq.bonus > 0 ? ` +${iq.bonus} bonus` : ''})`;
+            }).join(', ');
 
             card.innerHTML = `
                 <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
