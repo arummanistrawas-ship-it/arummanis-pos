@@ -458,28 +458,21 @@ const app = {
         } catch (e) { this.state.savedTransactions = []; }
         
         this.checkOfflineQueue();
-        
-        if (navigator.onLine && GAS_URL !== 'YOUR_GOOGLE_APPS_SCRIPT_WEB_APP_URL') {
-            try {
-                const response = await fetch(`${GAS_URL}?action=getProducts`);
-                const resData = await response.json();
-                if (resData.status === 'success' && resData.data) {
-                    this.state.products = resData.data;
-                    this.saveData();
-                }
-            } catch (error) {
-                console.error('Gagal memuat produk dari Sheets:', error);
-            }
-            
-            // Selalu tarik profil usaha terbaru dari Google Sheets saat online
-            await this.refreshSettingsFromServer();
-            
-            // Selalu tarik daftar transaksi terbaru dari Google Sheets saat online (Sinkronisasi Multi-Device)
-            await this.refreshTransactionsFromServer();
-            
-            // Sinkronisasi antrean offline yang tertunda setelah konek kembali
-            this.syncData();
-        }
+
+        // PENTING: jangan blokir startup menunggu server. Data lokal (cache) sudah dimuat di atas,
+        // jadi scan & pencarian produk langsung aktif. Sinkronisasi server dijalankan di LATAR BELAKANG.
+        this._backgroundServerSync();
+    },
+
+    // Sinkronisasi data dari Google Sheets tanpa memblokir UI (dipanggil setelah cache lokal siap)
+    _backgroundServerSync: async function() {
+        if (!navigator.onLine || GAS_URL === 'YOUR_GOOGLE_APPS_SCRIPT_WEB_APP_URL') return;
+        // refreshProductsFromServer sudah aman-merge (mempertahankan antrean lokal) & auto re-render POS/produk
+        try { await this.refreshProductsFromServer(); } catch (e) { console.error('BG produk:', e); }
+        try { await this.refreshSettingsFromServer(); } catch (e) { console.error('BG settings:', e); }
+        try { await this.refreshTransactionsFromServer(); } catch (e) { console.error('BG transaksi:', e); }
+        // Kirim antrean offline yang tertunda setelah konek kembali
+        this.syncData();
     },
     // C1 Fix: saveData now also persists settings
     saveData: function() {

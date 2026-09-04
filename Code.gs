@@ -233,11 +233,11 @@ function initSheets() {
     sSheet = ss.insertSheet("Pengaturan");
     sSheet.appendRow(["Key", "Value"]);
   }
-  
-  // Otomatis sinkronkan Nama_Camilan pada sheet StokBatch dengan DatabaseProduk
-  syncStokBatchProductNames();
-  // Otomatis sinkronkan Harga_Modal pada DatabaseProduk dari batch terbaru
-  syncMasterProductCostsFromBatches();
+
+  // CATATAN PERFORMA: sinkronisasi berat (nama batch & harga modal) TIDAK dijalankan di sini,
+  // karena initSheets dipanggil pada SETIAP request (termasuk getProducts) → memperlambat load.
+  // Sinkronisasi itu sudah dipanggil eksplisit oleh handler penulisan (processRestock,
+  // saveProduct, updateBatch) saat memang dibutuhkan, dan tersedia via menu spreadsheet.
 }
 
 function syncStokBatchProductNames() {
