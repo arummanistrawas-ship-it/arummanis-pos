@@ -221,6 +221,11 @@ const app = {
         restockScanner: null,
         bluetoothDevice: null,
         bluetoothChar: null,
+        bluetoothService: null,
+        _printChain: null,
+        _keepAliveTimer: null,
+        _reconnecting: false,
+        _printing: false,
         checkoutMode: 'new',
         repaymentTransactionId: null,
         savedTransactions: [],
@@ -1363,9 +1368,13 @@ const app = {
             status: (method === 'Kasbon' && remainingDebt > 0) ? 'Belum Lunas' : 'Lunas'
         };
 
-        // Update local stock
+        // Update local stock + hitung HPP FIFO akurat langsung saat checkout (data batch masih di memori).
+        // Fix #6: HPP dihitung dari harga beli batch yang benar-benar terpakai (FIFO), bukan estimasi getProductCostPrice.
         const batchDeductions = [];
+        let localHPP = 0;
         trx.items.forEach(item => {
+            const itemQty = parseInt(item.qty) || 0;
+            let remainingForHpp = itemQty; // qty yang belum tertutup oleh batch (untuk fallback modal)
             const p = findProduct(this.state.products, item.Barcode_ID, item.Nama_Camilan);
             if(p) {
                 p.Stok = parseInt(p.Stok) - item.qty;
@@ -1373,7 +1382,7 @@ const app = {
 
                 // Kurangi stok batch lokal secara FIFO
                 if (p.batches && Array.isArray(p.batches)) {
-                    let qtyToDeduct = parseInt(item.qty);
+                    let qtyToDeduct = itemQty;
                     // M3 Fix: Safe date parse with fallback
                     p.batches.sort((a, b) => {
                         const dateA = new Date(convertDateToPickerFormat(a.expiredDate));
@@ -1385,25 +1394,24 @@ const app = {
                         if (qtyToDeduct <= 0) break;
                         const batch = p.batches[b];
                         const deduct = Math.min(qtyToDeduct, batch.stokSisa);
+                        const batchCost = cleanNumber(batch.hargaBeli) || 0;
                         batch.stokSisa -= deduct;
                         qtyToDeduct -= deduct;
-                        itemDeductions.push({ batchId: batch.batchId, qty: deduct });
+                        localHPP += deduct * batchCost;       // HPP dari modal batch aktual
+                        remainingForHpp -= deduct;
+                        itemDeductions.push({ batchId: batch.batchId, qty: deduct, hargaBeli: batchCost });
                     }
                     batchDeductions.push({ barcode: item.Barcode_ID || item.Nama_Camilan, deductions: itemDeductions });
                     // Hanya pertahankan batch yang masih memiliki stok sisa
                     p.batches = p.batches.filter(b => b.stokSisa > 0);
                 }
             }
+            // Sisa qty yang tak tertutup batch (produk tanpa batch / oversold) → pakai estimasi modal
+            if (remainingForHpp > 0) {
+                localHPP += remainingForHpp * this.getProductCostPrice(item);
+            }
         });
         trx.batchDeductions = batchDeductions; // Store for rollback
-
-        // Hitung HPP dan Laba Bersih langsung saat checkout (data batch masih tersedia di memori)
-        let localHPP = 0;
-        trx.items.forEach(item => {
-            const qty = parseInt(item.qty) || 0;
-            const costPrice = this.getProductCostPrice(item);
-            localHPP += costPrice * qty;
-        });
         trx.hpp = localHPP;
         trx.netProfit = (parseFloat(trx.total) || 0) - localHPP;
 
@@ -1454,7 +1462,7 @@ const app = {
         let html = `
             ${headerHtml}
             <div class="r-row"><span>No:</span> <span>${trx.id}</span></div>
-            <div class="r-row"><span>Tgl:</span> <span>${new Date(trx.timestamp).toLocaleString('id-ID')}</span></div>
+            <div class="r-row"><span>Tgl:</span> <span>${(app._parseTransactionDate(trx.timestamp) || new Date(trx.timestamp)).toLocaleString('id-ID')}</span></div>
             <div class="r-row"><span>Kasir:</span> <span>${settings.cashierName || 'Admin'}</span></div>
             <div class="r-row"><span>Pelanggan:</span> <span>${trx.customer}</span></div>
             <hr>
@@ -1944,31 +1952,33 @@ const app = {
                 });
             }
 
-            // Hitung HPP per transaksi dari rincian item (karena item.editPrice dan data modal produk real-time paling akurat)
-            let trxHpp = 0;
-            let hasItemCosts = false;
+            // Fix #2: Prioritaskan HPP FIFO akurat yang tersimpan (dari server saat transaksi / recalculate_profits).
+            // HPP tersimpan (> 0) menandakan modal riil telah tercatat; ini juga otomatis mengikuti revisi harga modal
+            // setelah server melakukan recalculate. Estimasi hanya dipakai bila benar-benar tidak ada data modal.
+            const storedHpp = cleanNumber(trx.hpp);
+            const hasStoredHpp = trx.hpp !== undefined && trx.hpp !== null && trx.hpp !== '' && !isNaN(storedHpp) && storedHpp > 0;
 
-            if (trx.items && Array.isArray(trx.items) && trx.items.length > 0) {
-                trx.items.forEach(item => {
-                    const qty = parseInt(item.qty) || 0;
-                    const costPrice = this.getProductCostPrice(item);
-                    if (costPrice > 0) hasItemCosts = true;
-                    trxHpp += costPrice * qty;
-                });
-            }
-
-            // Jika item recalculation menghasilkan HPP yang valid, gunakan itu:
-            if (hasItemCosts && trxHpp > 0) {
-                laba += (trxTotal - trxHpp);
-            } else if (trx.netProfit !== undefined && trx.netProfit !== null && !isNaN(cleanNumber(trx.netProfit)) && cleanNumber(trx.netProfit) > 0) {
-                // Gunakan netProfit dari server jika tidak ada detail item
-                laba += cleanNumber(trx.netProfit);
-            } else if (trx.hpp !== undefined && trx.hpp !== null && !isNaN(cleanNumber(trx.hpp)) && cleanNumber(trx.hpp) > 0) {
-                // Gunakan HPP tersimpan
-                laba += (trxTotal - cleanNumber(trx.hpp));
+            if (hasStoredHpp) {
+                // Sumber utama: HPP FIFO akurat dari server. Laba = Omset - HPP (boleh nol/negatif, apa adanya).
+                laba += (trxTotal - storedHpp);
             } else {
-                // Fallback estimasi 20% margin jika benar-benar tanpa data modal
-                laba += Math.floor(trxTotal * 0.2);
+                // Tidak ada HPP tersimpan (mis. transaksi offline belum tersinkron) → hitung ulang dari rincian item
+                let trxHpp = 0;
+                let hasItemCosts = false;
+                if (trx.items && Array.isArray(trx.items) && trx.items.length > 0) {
+                    trx.items.forEach(item => {
+                        const qty = parseInt(item.qty) || 0;
+                        const costPrice = this.getProductCostPrice(item);
+                        if (costPrice > 0) hasItemCosts = true;
+                        trxHpp += costPrice * qty;
+                    });
+                }
+                if (hasItemCosts && trxHpp > 0) {
+                    laba += (trxTotal - trxHpp);
+                } else {
+                    // Fallback terakhir: estimasi 20% margin jika benar-benar tanpa data modal apa pun
+                    laba += Math.floor(trxTotal * 0.2);
+                }
             }
         });
 
@@ -2013,8 +2023,8 @@ const app = {
         const period = this._reportState.period;
         const refDate = this.getRefDateFromInputs();
 
-        // Validate inputs
-        if (period === 'custom') {
+        // Validate inputs — 'weekly' & 'custom' memakai objek {from,to}, sisanya memakai Date
+        if (period === 'custom' || period === 'weekly') {
             if (!refDate || !refDate.from || !refDate.to) return;
         } else {
             if (!refDate || !(refDate instanceof Date) || isNaN(refDate.getTime())) return;
@@ -2099,19 +2109,6 @@ const app = {
         return products.slice(0, 10);
     },
 
-    switchProductRankTab: function(tab) {
-        this._reportState.currentRankTab = tab;
-        const tabs = document.querySelectorAll('#productRankTabs .report-tab-btn');
-        tabs.forEach(t => t.classList.remove('active'));
-        if (tab === 'terlaris') {
-            tabs[0].classList.add('active');
-        } else {
-            tabs[1].classList.add('active');
-        }
-        const trxs = this._reportState.cachedTransactions || this.getFilteredTransactions(this._reportState.period, this.getRefDateFromInputs());
-        this.renderProductRankTable(trxs, tab);
-    },
-
     renderSalesChart: function(transactions, period, refDate) {
         const canvas = document.getElementById('salesTrendChart');
         if (!canvas) return;
@@ -2134,9 +2131,10 @@ const app = {
                 dataMap[label] = 0;
             }
             transactions.forEach(trx => {
-                const d = new Date(trx.timestamp);
+                const d = this._parseTransactionDate(trx.timestamp);
+                if (!d || isNaN(d.getTime())) return;
                 const key = String(d.getHours()).padStart(2, '0') + ':00';
-                dataMap[key] += (parseFloat(trx.total) || 0);
+                if (dataMap.hasOwnProperty(key)) dataMap[key] += (cleanNumber(trx.total) || 0);
             });
         } else if (period === 'weekly') {
             const dayNames = ['Min', 'Sen', 'Sel', 'Rab', 'Kam', 'Jum', 'Sab'];
@@ -2181,9 +2179,11 @@ const app = {
                 dataMap[dateStr] = 0;
             }
             transactions.forEach(trx => {
-                const trxDate = new Date(trx.timestamp).toISOString().split('T')[0];
+                const d = this._parseTransactionDate(trx.timestamp);
+                if (!d || isNaN(d.getTime())) return;
+                const trxDate = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
                 if (dataMap.hasOwnProperty(trxDate)) {
-                    dataMap[trxDate] += (parseFloat(trx.total) || 0);
+                    dataMap[trxDate] += (cleanNumber(trx.total) || 0);
                 }
             });
             const dateKeys = Object.keys(dataMap);
@@ -2195,27 +2195,33 @@ const app = {
             labels = [...monthNames];
             monthNames.forEach(m => { dataMap[m] = 0; });
             transactions.forEach(trx => {
-                const d = new Date(trx.timestamp);
+                const d = this._parseTransactionDate(trx.timestamp);
+                if (!d || isNaN(d.getTime())) return;
                 const key = monthNames[d.getMonth()];
-                dataMap[key] += (parseFloat(trx.total) || 0);
+                if (dataMap.hasOwnProperty(key)) dataMap[key] += (cleanNumber(trx.total) || 0);
             });
         } else if (period === 'custom') {
-            // Group by date
-            const from = new Date(refDate.from);
-            const to = new Date(refDate.to);
+            // Group by date — parse & format sebagai tanggal LOKAL agar tidak bergeser sehari (bug UTC toISOString)
+            const fp = (refDate.from || '').split('-');
+            const tp = (refDate.to || '').split('-');
+            const from = new Date(parseInt(fp[0]), parseInt(fp[1]) - 1, parseInt(fp[2]));
+            const to = new Date(parseInt(tp[0]), parseInt(tp[1]) - 1, parseInt(tp[2]));
+            const localKey = (dt) => dt.getFullYear() + '-' + String(dt.getMonth() + 1).padStart(2, '0') + '-' + String(dt.getDate()).padStart(2, '0');
             const diffDays = Math.ceil((to - from) / (1000 * 60 * 60 * 24)) + 1;
             for (let i = 0; i < diffDays && i < 90; i++) {
                 const current = new Date(from);
                 current.setDate(from.getDate() + i);
-                const dateStr = current.toISOString().split('T')[0];
+                const dateStr = localKey(current);
                 const label = current.getDate() + '/' + (current.getMonth() + 1);
                 labels.push(label);
                 dataMap[dateStr] = 0;
             }
             transactions.forEach(trx => {
-                const trxDate = new Date(trx.timestamp).toISOString().split('T')[0];
+                const d = this._parseTransactionDate(trx.timestamp);
+                if (!d || isNaN(d.getTime())) return;
+                const trxDate = localKey(d);
                 if (dataMap.hasOwnProperty(trxDate)) {
-                    dataMap[trxDate] += (parseFloat(trx.total) || 0);
+                    dataMap[trxDate] += (cleanNumber(trx.total) || 0);
                 }
             });
             const dateKeys = Object.keys(dataMap);
@@ -2403,7 +2409,7 @@ const app = {
 
     shareReportWhatsApp: function() {
         const period = this._reportState.period;
-        const filtered = this._reportState.cachedTransactions;
+        const filtered = this._reportState.cachedTransactions || [];
         const metrics = this.calculateMetrics(filtered);
         const top5 = this.getTopProducts(filtered, 'terlaris').slice(0, 5);
 
@@ -3091,6 +3097,7 @@ const app = {
                 const pendingDeletedBarcodes = new Set();
                 const pendingDeletedNames = new Set();
                 const pendingTrxItems = [];
+                const pendingRestocks = []; // Fix #3: restok yang belum tersinkron ke server
 
                 this.state.syncQueue.forEach(q => {
                     if (q.type === 'product' && q.data) {
@@ -3105,6 +3112,14 @@ const app = {
                                 name: item.Nama_Camilan,
                                 qty: parseInt(item.qty) || 0
                             });
+                        });
+                    } else if (q.type === 'restock' && q.data) {
+                        pendingRestocks.push({
+                            barcode: q.data.Barcode_ID,
+                            name: q.data.Nama_Camilan,
+                            qty: parseInt(q.data.qty) || 0,
+                            priceBuy: cleanNumber(q.data.priceBuy),
+                            expired: q.data.expired || ''
                         });
                     }
                 });
@@ -3130,6 +3145,7 @@ const app = {
                 });
 
                 // 4. Terapkan pengurangan stok lokal untuk transaksi offline yang belum terkirim
+                //    (Fix #4: kurangi juga batch secara FIFO agar checkout offline berikutnya tidak menghitung ganda)
                 mergedProducts.forEach(sp => {
                     pendingTrxItems.forEach(pending => {
                         const match = (sp.Barcode_ID && pending.barcode && compareBarcode(sp.Barcode_ID, pending.barcode)) ||
@@ -3137,8 +3153,44 @@ const app = {
                         if (match) {
                             sp.Stok = Math.max(0, (parseInt(sp.Stok) || 0) - pending.qty);
                             if (sp.Stok === 0) sp.Status = 'Habis';
+
+                            if (sp.batches && Array.isArray(sp.batches) && sp.batches.length > 0) {
+                                sp.batches.sort((a, b) => {
+                                    const da = new Date(convertDateToPickerFormat(a.expiredDate));
+                                    const db = new Date(convertDateToPickerFormat(b.expiredDate));
+                                    return (isNaN(da) ? Infinity : da) - (isNaN(db) ? Infinity : db);
+                                });
+                                let toDeduct = pending.qty;
+                                sp.batches.forEach(b => {
+                                    if (toDeduct <= 0) return;
+                                    const d = Math.min(toDeduct, b.stokSisa);
+                                    b.stokSisa -= d;
+                                    toDeduct -= d;
+                                });
+                                sp.batches = sp.batches.filter(b => b.stokSisa > 0);
+                            }
                         }
                     });
+                });
+
+                // 4b. Terapkan restok lokal yang belum tersinkron (Fix #3: cegah stok restok hilang saat refresh)
+                pendingRestocks.forEach(r => {
+                    if (r.qty <= 0) return;
+                    const sp = mergedProducts.find(x =>
+                        (x.Barcode_ID && r.barcode && compareBarcode(x.Barcode_ID, r.barcode)) ||
+                        (x.Nama_Camilan && r.name && x.Nama_Camilan.toString().trim().toLowerCase() === r.name.toString().trim().toLowerCase())
+                    );
+                    if (sp) {
+                        sp.Stok = (parseInt(sp.Stok) || 0) + r.qty;
+                        sp.Status = 'Ready';
+                        if (!sp.batches) sp.batches = [];
+                        sp.batches.push({
+                            batchId: 'B-pending-' + Date.now() + '-' + Math.floor(Math.random() * 1000),
+                            stokSisa: r.qty,
+                            expiredDate: r.expired || '',
+                            hargaBeli: r.priceBuy || 0
+                        });
+                    }
                 });
 
                 this.state.products = mergedProducts;
@@ -3616,7 +3668,7 @@ const app = {
         if (settings.shopAddress) text += `📍 ${settings.shopAddress}\n`;
         text += `━━━━━━━━━━━━━━━━━━━━\n`;
         text += `No   : ${trx.id}\n`;
-        text += `Tgl  : ${new Date(trx.timestamp).toLocaleString('id-ID')}\n`;
+        text += `Tgl  : ${(app._parseTransactionDate(trx.timestamp) || new Date(trx.timestamp)).toLocaleString('id-ID')}\n`;
         text += `Kasir: ${settings.cashierName || 'Admin'}\n`;
         text += `Pel  : ${trx.customer}\n`;
         text += `━━━━━━━━━━━━━━━━━━━━\n`;
@@ -3657,14 +3709,21 @@ const app = {
     },
 
     preloadBluetoothDevice: async function() {
-        // Coba ambil device yang sudah pernah di-pair sebelumnya saat page load
+        // Ambil device yang sudah pernah di-pair saat page load, cocokkan dengan printer yang DIPILIH terakhir (by id)
         if (navigator.bluetooth && navigator.bluetooth.getDevices) {
             try {
                 const devices = await navigator.bluetooth.getDevices();
                 if (devices && devices.length > 0) {
-                    this.state.bluetoothDevice = devices[0];
-                    this.setupBluetoothDisconnectListener(devices[0]);
-                    console.log("Preloaded paired Bluetooth device:", devices[0].name);
+                    let savedId = '';
+                    try { savedId = localStorage.getItem('pos_printer_id') || ''; } catch (e) {}
+                    // Prioritaskan printer yang tersimpan; jika tidak ada, ambil perangkat pertama sebagai fallback
+                    const chosen = (savedId && devices.find(d => d.id === savedId)) || devices[0];
+                    this.state.bluetoothDevice = chosen;
+                    this.setupBluetoothDisconnectListener(chosen);
+                    console.log("Preloaded Bluetooth device:", chosen.name, chosen.id);
+                    // Hangatkan koneksi di latar belakang + jaga tetap hidup agar cetak pertama langsung siap
+                    this._startPrinterKeepAlive();
+                    setTimeout(() => { this._silentReconnect(); }, 1000);
                 }
             } catch (err) {
                 console.error("Gagal preloading paired devices:", err);
@@ -3701,6 +3760,8 @@ const app = {
         }
         this.state.bluetoothDevice = null;
         this.state.bluetoothChar = null;
+        this.state.bluetoothService = null;
+        try { localStorage.removeItem('pos_printer_id'); localStorage.removeItem('pos_printer_name'); } catch (e) {}
         this.updatePrinterStatusUI();
         Swal.fire({ toast: true, position: 'top-end', icon: 'info', title: 'Koneksi printer diputuskan', showConfirmButton: false, timer: 2000 });
     },
@@ -3737,9 +3798,16 @@ const app = {
             acceptAllDevices: true,
             optionalServices: PRINTER_SERVICES
         });
-        
+
         if (device) {
             this.state.bluetoothDevice = device;
+            this.state.bluetoothChar = null;
+            this.state.bluetoothService = null;
+            // Ingat printer yang dipilih agar bisa auto-connect di sesi berikutnya
+            try {
+                localStorage.setItem('pos_printer_id', device.id);
+                if (device.name) localStorage.setItem('pos_printer_name', device.name);
+            } catch (e) {}
             this.setupBluetoothDisconnectListener(device);
             this.updatePrinterStatusUI();
         }
@@ -3747,178 +3815,248 @@ const app = {
     },
 
     setupBluetoothDisconnectListener: function(device) {
-        if (!device) return;
+        // Cegah listener ganda pada device yang sama
+        if (!device || device._kasirListenerAttached) return;
+        device._kasirListenerAttached = true;
         device.addEventListener('gattserverdisconnected', () => {
             console.log('Koneksi printer Bluetooth terputus.');
             this.state.bluetoothChar = null;
+            this.state.bluetoothService = null;
             this.updatePrinterStatusUI();
+            // Pulihkan koneksi diam-diam agar saat cetak nanti sudah siap (tanpa perlu sambung ulang manual)
+            setTimeout(() => { this._silentReconnect(); }, 1500);
         });
     },
 
-    connectToPrinter: async function(retryCount = 0) {
-        let device = await this.getBluetoothDevice();
-        if (!device) throw new Error('Printer tidak dipilih.');
-
-        // Jika printer masih tersambung dan karakteristik tulis siap, gunakan langsung (instant print)
-        if (device.gatt && device.gatt.connected && this.state.bluetoothChar) {
-            return this.state.bluetoothChar;
-        }
-
-        // Hubungkan kembali ke GATT Server
-        Swal.fire({ 
-            title: 'Menghubungkan ke Printer...', 
-            html: `Menghubungkan ke <b>${device.name || 'Printer Bluetooth'}</b>...`,
-            allowOutsideClick: false, 
-            didOpen: () => Swal.showLoading() 
-        });
-
+    // Reconnect di latar belakang TANPA popup/UI. Dipakai keep-alive & saat koneksi tiba-tiba putus.
+    _silentReconnect: async function() {
+        if (this.state._reconnecting || this.state._printing) return;
+        const device = this.state.bluetoothDevice;
+        if (!device) return;
+        // Sudah tersambung & siap → tidak perlu apa-apa
+        if (device.gatt && device.gatt.connected && this.state.bluetoothChar) return;
+        this.state._reconnecting = true;
         try {
-            // Disconnect first jika status gatt sebelumnya stuck
-            if (device.gatt && device.gatt.connected) {
-                try { device.gatt.disconnect(); } catch (e) {}
+            const server = await this._gattConnectWithTimeout(device, 8000);
+            const found = await this._findPrintCharacteristic(server);
+            if (found.char) {
+                this.state.bluetoothChar = found.char;
+                this.state.bluetoothService = found.service;
+                this.updatePrinterStatusUI();
+                console.log('Keep-alive: printer tersambung ulang diam-diam.');
             }
+        } catch (e) {
+            // Diam saja — akan dicoba lagi pada interval berikutnya atau saat menekan cetak
+        } finally {
+            this.state._reconnecting = false;
+        }
+    },
 
-            // Koneksi dengan timeout 8 detik
-            const connectPromise = device.gatt.connect();
-            const timeoutPromise = new Promise((_, reject) => 
-                setTimeout(() => reject(new Error('Koneksi timeout. Pastikan printer menyala & dekat.')), 8000)
-            );
-            const server = await Promise.race([connectPromise, timeoutPromise]);
+    // Jaga koneksi tetap hidup: cek berkala, sambung ulang bila putus (hanya saat app terlihat)
+    _startPrinterKeepAlive: function() {
+        if (this.state._keepAliveTimer) return;
+        this.state._keepAliveTimer = setInterval(() => {
+            const dev = this.state.bluetoothDevice;
+            if (!dev) return;
+            const ready = dev.gatt && dev.gatt.connected && this.state.bluetoothChar;
+            if (!ready && document.visibilityState === 'visible' && !this.state._printing && !this.state._reconnecting) {
+                this._silentReconnect();
+            }
+        }, 20000); // cek tiap 20 detik
+    },
 
-            let printChar = null;
+    // Koneksi GATT dengan timeout agar tidak menggantung selamanya
+    _gattConnectWithTimeout: function(device, ms) {
+        const connectPromise = device.gatt.connect();
+        const timeoutPromise = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('Koneksi timeout. Pastikan printer menyala & dekat.')), ms)
+        );
+        return Promise.race([connectPromise, timeoutPromise]);
+    },
 
-            // Prioritaskan characteristic yang mendukung write (dengan konfirmasi/acknowledgment)
-            // karena writeWithoutResponse bisa lolos tanpa data benar-benar sampai ke printer
-            const findBestPrintChar = (chars) => {
-                // Prioritas 1: write-with-response (paling reliabel, printer mengkonfirmasi penerimaan)
-                const writeChar = chars.find(c => c.properties.write);
-                if (writeChar) return writeChar;
-                // Prioritas 2: writeWithoutResponse (fallback jika write tidak tersedia)
-                return chars.find(c => c.properties.writeWithoutResponse) || null;
-            };
-
-            // 1. Fast-path: Scan daftar known services printer ESC/POS & BLE UART
-            for (const serviceUuid of PRINTER_SERVICES) {
-                try {
-                    const service = await server.getPrimaryService(serviceUuid);
-                    const chars = await service.getCharacteristics();
-                    printChar = findBestPrintChar(chars);
-                    if (printChar) {
-                        console.log(`Printer char ditemukan di service ${serviceUuid}, write=${printChar.properties.write}, writeNoResp=${printChar.properties.writeWithoutResponse}`);
-                        break;
-                    }
-                } catch (e) {
-                    continue;
+    // Temukan characteristic untuk mencetak: utamakan service printer yang dikenal, lalu full-scan
+    _findPrintCharacteristic: async function(server) {
+        const pick = (chars) => {
+            // Utamakan write-with-response (andal), fallback ke writeWithoutResponse
+            return chars.find(c => c.properties.write) ||
+                   chars.find(c => c.properties.writeWithoutResponse) || null;
+        };
+        // Fast-path: daftar service printer ESC/POS & BLE UART yang umum
+        for (const uuid of PRINTER_SERVICES) {
+            try {
+                const service = await server.getPrimaryService(uuid);
+                const chars = await service.getCharacteristics();
+                const char = pick(chars);
+                if (char) {
+                    console.log(`Print char via service ${uuid} (write=${char.properties.write}, noResp=${char.properties.writeWithoutResponse})`);
+                    return { char: char, service: service };
                 }
-            }
-
-            // 2. Slow-path fallback: Scan seluruh primary service jika belum ketemu
-            if (!printChar) {
+            } catch (e) { continue; }
+        }
+        // Slow-path: scan seluruh primary service
+        try {
+            const services = await server.getPrimaryServices();
+            for (const service of services) {
                 try {
-                    const services = await server.getPrimaryServices();
-                    for (const s of services) {
-                        try {
-                            const chars = await s.getCharacteristics();
-                            printChar = findBestPrintChar(chars);
-                            if (printChar) {
-                                console.log(`Printer char ditemukan via full-scan, write=${printChar.properties.write}, writeNoResp=${printChar.properties.writeWithoutResponse}`);
-                                break;
-                            }
-                        } catch (e) {}
+                    const chars = await service.getCharacteristics();
+                    const char = pick(chars);
+                    if (char) {
+                        console.log(`Print char via full-scan (write=${char.properties.write}, noResp=${char.properties.writeWithoutResponse})`);
+                        return { char: char, service: service };
                     }
                 } catch (e) {}
             }
-
-            if (!printChar) throw new Error('Karakteristik Bluetooth untuk Print tidak ditemukan pada printer ini.');
-
-            this.state.bluetoothChar = printChar;
-            this.updatePrinterStatusUI();
-            Swal.close();
-            return printChar;
-
-        } catch (err) {
-            Swal.close();
-            console.error('Koneksi printer gagal:', err);
-            
-            // Auto-retry 1x jika koneksi pertama gagal
-            if (retryCount < 1) {
-                console.log('Mencoba reconnect otomatis ke printer...');
-                await new Promise(r => setTimeout(r, 800));
-                return this.connectToPrinter(retryCount + 1);
-            }
-
-            // Jika gagal setelah retry, tawarkan pairing ulang perangkat baru
-            const res = await Swal.fire({
-                title: 'Gagal Terhubung ke Printer',
-                html: `<p style="font-size:0.9rem; color:#64748b;">Tidak dapat tersambung ke <b>${device.name || 'Printer Bluetooth'}</b>.<br>Pastikan printer menyala, Bluetooth HP aktif, dan printer berada di dekat HP.</p>`,
-                icon: 'warning',
-                showCancelButton: true,
-                confirmButtonText: '🔄 Pilih Ulang Printer',
-                cancelButtonText: 'Batal',
-                confirmButtonColor: '#FF6B6B'
-            });
-
-            if (res.isConfirmed) {
-                this.state.bluetoothDevice = null;
-                this.state.bluetoothChar = null;
-                this.updatePrinterStatusUI();
-                return this.connectToPrinter(0);
-            }
-
-            throw err;
-        }
+        } catch (e) {}
+        return { char: null, service: null };
     },
 
-    // Fungsi sentral pengiriman data byte ke printer BLE
-    // Menggunakan writeValue (write-with-response) sebagai metode utama karena printer mengkonfirmasi 
-    // setiap chunk yang diterima. writeValueWithoutResponse hanya digunakan sebagai fallback.
-    _writeChunksToPrinter: async function(printChar, fullBytes) {
-        const CHUNK_SIZE = 100; // Ukuran chunk aman untuk mayoritas printer thermal BLE
-        const DELAY_MS = 40;   // Delay antar chunk (mencegah buffer overflow pada chip BLE)
-        
-        const useWriteWithResponse = printChar.properties.write;
-        const useWriteWithoutResponse = printChar.properties.writeWithoutResponse;
-        
-        console.log(`BLE Print: ${fullBytes.length} bytes, chunk=${CHUNK_SIZE}, write=${useWriteWithResponse}, writeNoResp=${useWriteWithoutResponse}`);
-        
-        for (let i = 0; i < fullBytes.length; i += CHUNK_SIZE) {
-            const chunk = fullBytes.slice(i, i + CHUNK_SIZE);
-            // Bungkus dalam DataView untuk kompatibilitas Android WebView & Chrome
-            const dataView = new DataView(chunk.buffer, chunk.byteOffset, chunk.byteLength);
-            
+    connectToPrinter: async function(forceReconnect = false) {
+        let device = await this.getBluetoothDevice();
+        if (!device) throw new Error('Printer tidak dipilih.');
+
+        // Fast-path: koneksi & characteristic masih valid → langsung pakai (cetak instan)
+        if (!forceReconnect && device.gatt && device.gatt.connected && this.state.bluetoothChar) {
+            this._startPrinterKeepAlive();
+            return this.state.bluetoothChar;
+        }
+
+        Swal.fire({
+            title: 'Menghubungkan ke Printer...',
+            html: `Menghubungkan ke <b>${device.name || 'Printer Bluetooth'}</b>...`,
+            allowOutsideClick: false,
+            didOpen: () => Swal.showLoading()
+        });
+
+        // Tandai sedang menyambung agar keep-alive tidak ikut campur
+        this.state._reconnecting = true;
+        // Coba hingga 3x dengan jeda bertingkat (backoff)
+        let lastErr = null;
+        for (let attempt = 0; attempt < 3; attempt++) {
             try {
-                if (useWriteWithResponse) {
-                    // Metode utama: writeValue menunggu konfirmasi dari printer bahwa data diterima
-                    await printChar.writeValue(dataView);
-                } else if (useWriteWithoutResponse) {
-                    // Fallback: writeWithoutResponse (fire-and-forget, kurang reliabel)
-                    await printChar.writeValueWithoutResponse(dataView);
-                } else {
-                    // Last resort: coba writeValue langsung
-                    await printChar.writeValue(dataView);
+                // Bersihkan koneksi yang mungkin nyangkut sebelum menyambung ulang
+                if (device.gatt && device.gatt.connected) {
+                    try { device.gatt.disconnect(); } catch (e) {}
+                    await new Promise(r => setTimeout(r, 400));
                 }
-            } catch (writeErr) {
-                console.warn(`BLE write error at offset ${i}, retrying...`, writeErr);
-                // Retry 1x dengan delay lebih panjang
-                await new Promise(r => setTimeout(r, 100));
-                try {
-                    if (useWriteWithResponse) {
-                        await printChar.writeValue(dataView);
-                    } else {
-                        await printChar.writeValueWithoutResponse(dataView);
-                    }
-                } catch (retryErr) {
-                    console.error(`BLE write retry failed at offset ${i}:`, retryErr);
-                    throw new Error('Gagal mengirim data ke printer. Pastikan printer masih menyala dan dekat.');
-                }
-            }
-            
-            // Delay antar chunk agar buffer printer tidak overflow
-            if (i + CHUNK_SIZE < fullBytes.length) {
-                await new Promise(r => setTimeout(r, DELAY_MS));
+
+                const server = await this._gattConnectWithTimeout(device, 10000);
+                const found = await this._findPrintCharacteristic(server);
+                if (!found.char) throw new Error('Karakteristik Bluetooth untuk Print tidak ditemukan pada printer ini.');
+
+                this.state.bluetoothChar = found.char;
+                this.state.bluetoothService = found.service;
+                this.state._reconnecting = false;
+                this.updatePrinterStatusUI();
+                this._startPrinterKeepAlive();
+                Swal.close();
+                return found.char;
+            } catch (err) {
+                lastErr = err;
+                console.warn(`Percobaan koneksi #${attempt + 1} gagal:`, err && err.message ? err.message : err);
+                await new Promise(r => setTimeout(r, 600 * (attempt + 1)));
             }
         }
-        console.log('BLE Print: Seluruh data berhasil dikirim ke printer.');
+        this.state._reconnecting = false;
+
+        Swal.close();
+        // Setelah 3x gagal → tawarkan pilih ulang perangkat
+        const res = await Swal.fire({
+            title: 'Gagal Terhubung ke Printer',
+            html: `<p style="font-size:0.9rem; color:#64748b;">Tidak dapat tersambung ke <b>${device.name || 'Printer Bluetooth'}</b>.<br>Pastikan printer menyala, kertas terpasang, Bluetooth HP aktif, dan printer dekat dengan HP.</p>`,
+            icon: 'warning',
+            showCancelButton: true,
+            confirmButtonText: '🔄 Pilih Ulang Printer',
+            cancelButtonText: 'Batal',
+            confirmButtonColor: '#FF6B6B'
+        });
+
+        if (res.isConfirmed) {
+            this.state.bluetoothDevice = null;
+            this.state.bluetoothChar = null;
+            this.state.bluetoothService = null;
+            try { localStorage.removeItem('pos_printer_id'); } catch (e) {}
+            const dev = await this.getBluetoothDevice(true);
+            if (!dev) throw (lastErr || new Error('Printer tidak dipilih.'));
+            return this.connectToPrinter(true);
+        }
+
+        throw (lastErr || new Error('Gagal terhubung ke printer.'));
+    },
+
+    // Fungsi sentral pengiriman data byte ke printer BLE.
+    // Semua panggilan diserialkan lewat antrean (_printChain) agar tidak terjadi
+    // "GATT operation already in progress" saat cetak dipicu beruntun (mis. logo + teks / double tap).
+    _writeChunksToPrinter: function(printChar, fullBytes) {
+        const task = () => this._doWriteChunks(printChar, fullBytes);
+        // Jalankan setelah antrean sebelumnya selesai (baik sukses maupun gagal)
+        const result = (this.state._printChain || Promise.resolve()).then(task, task);
+        // Simpan versi yang tidak menolak agar rantai antrean tetap hidup untuk cetakan berikutnya
+        this.state._printChain = result.catch(() => {});
+        return result;
+    },
+
+    _doWriteChunks: async function(printChar, fullBytes) {
+        this.state._printing = true; // cegah keep-alive menyela di tengah cetak
+        try {
+        let char = printChar || this.state.bluetoothChar;
+        if (!char) char = await this.connectToPrinter();
+
+        // Metode tulis menentukan ukuran chunk aman:
+        //  - write-with-response: Chrome fragmen otomatis & printer meng-ACK → chunk boleh besar (180B)
+        //  - writeWithoutResponse: dibatasi MTU (default ±20B) → wajib kecil agar tidak drop
+        let withResp = !!char.properties.write;
+        let CHUNK = withResp ? 180 : 20;
+        const DELAY = withResp ? 20 : 15;
+
+        const writeOne = (view) => {
+            if (withResp && char.properties.write) return char.writeValue(view);
+            if (char.properties.writeWithoutResponse && char.writeValueWithoutResponse) return char.writeValueWithoutResponse(view);
+            return char.writeValue(view);
+        };
+
+        console.log(`BLE Print: ${fullBytes.length} bytes, withResp=${withResp}, chunk=${CHUNK}`);
+
+        let reconnectedOnce = false;
+        let i = 0;
+        while (i < fullBytes.length) {
+            const chunk = fullBytes.subarray(i, i + CHUNK);
+            const view = new DataView(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+            try {
+                await writeOne(view);
+                i += CHUNK;
+                if (i < fullBytes.length && DELAY) await new Promise(r => setTimeout(r, DELAY));
+            } catch (err) {
+                console.warn(`BLE write gagal di offset ${i} (chunk=${CHUNK}):`, err && err.message ? err.message : err);
+
+                // 1) Kemungkinan chunk melebihi MTU → perkecil ke 20B lalu ulangi offset yang sama
+                if (CHUNK > 20) {
+                    CHUNK = 20;
+                    await new Promise(r => setTimeout(r, 80));
+                    continue;
+                }
+
+                // 2) Kemungkinan koneksi putus → reconnect penuh 1x, lalu lanjut dari offset ini
+                if (!reconnectedOnce) {
+                    reconnectedOnce = true;
+                    try {
+                        char = await this.connectToPrinter(true);
+                        withResp = !!char.properties.write;
+                        // setelah reconnect, tetap konservatif pakai chunk kecil untuk sisa data
+                        CHUNK = withResp ? 180 : 20;
+                        await new Promise(r => setTimeout(r, 150));
+                        continue;
+                    } catch (reErr) {
+                        console.error('Reconnect saat cetak gagal:', reErr);
+                    }
+                }
+
+                throw new Error('Gagal mengirim data ke printer. Pastikan printer menyala, kertas ada, dan printer dekat dengan HP, lalu coba cetak lagi.');
+            }
+        }
+        console.log('BLE Print: Seluruh data terkirim.');
+        } finally {
+            this.state._printing = false;
+        }
     },
 
     testConnectPrinter: async function() {
@@ -4095,7 +4233,7 @@ const app = {
             // Build receipt body text with left-margin padding (3 spaces)
             let bodyTxt = "";
             bodyTxt += "   ----------------------------\n";
-            bodyTxt += `   No   : ${trx.id}\n   Tgl  : ${new Date(trx.timestamp).toLocaleString('id-ID')}\n   Kasir: ${settings.cashierName || 'Admin'}\n   Pel  : ${trx.customer}\n`;
+            bodyTxt += `   No   : ${trx.id}\n   Tgl  : ${(app._parseTransactionDate(trx.timestamp) || new Date(trx.timestamp)).toLocaleString('id-ID')}\n   Kasir: ${settings.cashierName || 'Admin'}\n   Pel  : ${trx.customer}\n`;
             bodyTxt += "   ----------------------------\n";
             
             // Items list

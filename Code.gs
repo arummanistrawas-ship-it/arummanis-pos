@@ -52,61 +52,91 @@ function findHeaderCol(headers, candidates) {
 }
 
 function doGet(e) {
-  var action = e.parameter.action;
-  
-  if (action === 'getProducts') {
-    return getProducts();
+  try {
+    var action = (e && e.parameter && e.parameter.action) ? e.parameter.action : '';
+
+    if (action === 'getProducts') {
+      return getProducts();
+    }
+
+    if (action === 'get_settings') {
+      return getSettings();
+    }
+
+    if (action === 'get_transactions') {
+      return getTransactions();
+    }
+
+    if (action === 'recalculate_profits') {
+      // recalculate menulis ke sheet → jalankan di dalam lock agar tidak bentrok dengan sync device lain
+      var res = withScriptLock(function() { return recalculateTransactionProfits(); });
+      return successResponse(res);
+    }
+
+    return errorResponse('Action not found: ' + action);
+  } catch (error) {
+    return errorResponse('doGet error: ' + error.toString());
   }
-  
-  if (action === 'get_settings') {
-    return getSettings();
+}
+
+// Helper penguncian agar operasi baca-ubah-tulis sheet aman dari race condition multi-device.
+// Semua handler penulisan HARUS lewat sini supaya dua sinkronisasi bersamaan tidak saling menimpa.
+function withScriptLock(fn) {
+  var lock = LockService.getScriptLock();
+  var acquired = false;
+  try {
+    acquired = lock.tryLock(30000); // tunggu maksimal 30 detik
+  } catch (e) {
+    acquired = false;
   }
-  
-  if (action === 'get_transactions') {
-    return getTransactions();
+  if (!acquired) {
+    throw new Error('Server sibuk (gagal mendapatkan lock). Coba lagi sebentar.');
   }
-  
-  if (action === 'recalculate_profits') {
-    var res = recalculateTransactionProfits();
-    return successResponse(res);
+  try {
+    return fn();
+  } finally {
+    try { lock.releaseLock(); } catch (e) {}
   }
-  
-  return ContentService.createTextOutput(JSON.stringify({status: 'error', message: 'Action not found'}))
-    .setMimeType(ContentService.MimeType.JSON);
 }
 
 function doPost(e) {
   try {
-    var data = JSON.parse(e.postData.contents);
-    
-    // Sinkronisasi data dari queue (Offline-First)
-    if (data.action === 'syncData' && data.payload) {
-        var payload = data.payload;
-        if (payload.type === 'transaction') {
-            return processTransaction(payload.data);
-        } else if (payload.type === 'update_status') {
-            return updateTransactionStatus(payload.data);
-        } else if (payload.type === 'product') {
-            return saveProduct(payload.data);
-        } else if (payload.type === 'delete_product') {
-            return deleteProduct(payload.data);
-        } else if (payload.type === 'restock') {
-            return processRestock(payload.data);
-        } else if (payload.type === 'save_settings') {
-            return saveSettings(payload.data);
-        } else if (payload.type === 'update_batch') {
-            return updateBatch(payload.data);
-        } else if (payload.type === 'delete_transaction') {
-            return deleteTransaction(payload.data);
-        }
+    if (!e || !e.postData || !e.postData.contents) {
+      return errorResponse('Request kosong / tidak valid (postData tidak ada)');
     }
-    
-    return ContentService.createTextOutput(JSON.stringify({status: 'error', message: 'Action not found'}))
-      .setMimeType(ContentService.MimeType.JSON);
-      
+
+    var data;
+    try {
+      data = JSON.parse(e.postData.contents);
+    } catch (parseErr) {
+      return errorResponse('Payload bukan JSON valid: ' + parseErr.toString());
+    }
+
+    // Sinkronisasi data dari queue (Offline-First). Semua tipe di bawah bersifat MENULIS ke sheet,
+    // jadi seluruh dispatch dibungkus lock untuk mencegah korupsi data saat multi-device sync bersamaan.
+    if (data && data.action === 'syncData' && data.payload) {
+      var payload = data.payload;
+      if (!payload.type) return errorResponse('Payload sync tanpa "type"');
+
+      return withScriptLock(function() {
+        switch (payload.type) {
+          case 'transaction':        return processTransaction(payload.data);
+          case 'update_status':      return updateTransactionStatus(payload.data);
+          case 'product':            return saveProduct(payload.data);
+          case 'delete_product':     return deleteProduct(payload.data);
+          case 'restock':            return processRestock(payload.data);
+          case 'save_settings':      return saveSettings(payload.data);
+          case 'update_batch':       return updateBatch(payload.data);
+          case 'delete_transaction': return deleteTransaction(payload.data);
+          default:                   return errorResponse('Tipe sync tidak dikenal: ' + payload.type);
+        }
+      });
+    }
+
+    return errorResponse('Action not found');
+
   } catch (error) {
-    return ContentService.createTextOutput(JSON.stringify({status: 'error', message: error.toString()}))
-      .setMimeType(ContentService.MimeType.JSON);
+    return errorResponse(error.toString());
   }
 }
 
@@ -548,21 +578,26 @@ function getProducts() {
 // Logika Pengurangan Stok FIFO (First In, First Out)
 function processTransaction(transaction) {
   try {
+    if (!transaction || typeof transaction !== 'object') return errorResponse('Data transaksi kosong / tidak valid');
+    var trxId = (transaction.id !== undefined && transaction.id !== null) ? transaction.id.toString().trim() : '';
+    if (trxId === '') trxId = 'TRX-' + Date.now();
+    transaction.id = trxId;
+
     initSheets();
     var ss = SpreadsheetApp.getActiveSpreadsheet();
     var bSheet = ss.getSheetByName("StokBatch");
     var tSheet = ss.getSheetByName("DatabaseTransaksi");
-    
+
     if (!tSheet) return errorResponse('Sheet DatabaseTransaksi tidak ditemukan');
-    
+
     // Anti-Duplikasi: Cegah transaksi dikurangi/dicatat dua kali jika koneksi internet terputus saat sync
     var tData = tSheet.getDataRange().getDisplayValues();
     if (tData.length > 1) {
       var tIdCol = tData[0].indexOf("ID");
       if (tIdCol === -1) tIdCol = 0;
       for (var tx = 1; tx < tData.length; tx++) {
-        if (tData[tx][tIdCol].toString().trim() === transaction.id.toString().trim()) {
-          return successResponse('Transaksi ' + transaction.id + ' sudah pernah diproses (diabaikan duplikasi)');
+        if (tData[tx][tIdCol].toString().trim() === trxId) {
+          return successResponse('Transaksi ' + trxId + ' sudah pernah diproses (diabaikan duplikasi)');
         }
       }
     }
@@ -707,28 +742,34 @@ function processTransaction(transaction) {
 }
 
 function updateTransactionStatus(data) {
+  if (!data || data.id === undefined || data.id === null || data.id.toString().trim() === '') {
+    return errorResponse('Data update status tidak valid (ID kosong)');
+  }
+  var targetId = data.id.toString().trim();
   initSheets();
   var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("DatabaseTransaksi");
   if (!sheet) return errorResponse('Sheet "DatabaseTransaksi" tidak ditemukan');
-  
+
   var table = sheet.getDataRange().getDisplayValues();
+  if (table.length < 2) return errorResponse('DatabaseTransaksi kosong');
   var headers = table[0];
   var idCol = headers.indexOf("ID");
-  
+  if (idCol === -1) idCol = 0;
+
   var statusCol = headers.indexOf("Status");
   if (statusCol === -1) statusCol = 10; // Kolom ke-11
-  
+
   var cashCol = headers.indexOf("Uang_Bayar");
   if (cashCol === -1) cashCol = headers.indexOf("Cash");
   if (cashCol === -1) cashCol = 8; // Kolom ke-9
-  
+
   var changeCol = headers.indexOf("Kembalian");
   if (changeCol === -1) changeCol = headers.indexOf("Change");
   if (changeCol === -1) changeCol = 9; // Kolom ke-10
-  
-  if (idCol > -1) {
+
+  {
     for (var i = 1; i < table.length; i++) {
-      if (table[i][idCol] === data.id) {
+      if (table[i][idCol].toString().trim() === targetId) {
         // 1. Update Status (Lunas / Belum Lunas)
         sheet.getRange(i + 1, statusCol + 1).setValue(data.status);
         
@@ -753,11 +794,17 @@ function updateTransactionStatus(data) {
 
 // Simpan data produk baru beserta batch awalnya
 function saveProduct(product) {
+  if (!product || typeof product !== 'object') return errorResponse('Data produk kosong / tidak valid');
+  if ((!product.Nama_Camilan || product.Nama_Camilan.toString().trim() === '') &&
+      (!product.Barcode_ID || product.Barcode_ID.toString().trim() === '')) {
+    return errorResponse('Produk wajib punya Nama atau Barcode');
+  }
   initSheets();
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var pSheet = ss.getSheetByName("DatabaseProduk");
   var bSheet = ss.getSheetByName("StokBatch");
-  
+  if (!pSheet || !bSheet) return errorResponse('Sheet DatabaseProduk / StokBatch tidak ditemukan');
+
   var pData = pSheet.getDataRange().getDisplayValues();
   var pHeaders = pData[0];
   
@@ -871,7 +918,7 @@ function saveProduct(product) {
       var batchId = "B-" + Date.now();
       var tanggalMasuk = formatDate(new Date());
       var tanggalExpired = product.Tanggal_Expired || formatDate(new Date(Date.now() + 365*24*60*60*1000));
-      var hargaBeli = product.Harga_Beli || product.Harga_Modal || Math.floor(product.Harga * 0.8);
+      var hargaBeli = cleanNumber(product.Harga_Beli) || cleanNumber(product.Harga_Modal) || Math.floor(cleanNumber(product.Harga) * 0.8);
       
       var maxCol = Math.max(bIdCol, bBarcodeCol, bNameCol > -1 ? bNameCol : 0, bMasukCol, bExpCol, bAwalCol, bSisaCol, bBuyCol, bStatusCol) + 1;
       var newBatchRow = new Array(maxCol).fill("");
@@ -987,30 +1034,64 @@ function getTransactions() {
 }
 
 function deleteProduct(data) {
+  if (!data || typeof data !== 'object') return errorResponse('Data hapus produk tidak valid');
+
+  var targetBc = (data.Barcode_ID !== undefined && data.Barcode_ID !== null) ? data.Barcode_ID.toString().trim().toLowerCase() : '';
+  var targetNm = (data.Nama_Camilan !== undefined && data.Nama_Camilan !== null) ? data.Nama_Camilan.toString().trim().toLowerCase() : '';
+  var sheetRow = parseInt(data._sheetRow) || 0;
+
+  if (targetBc === '' && targetNm === '' && sheetRow < 2) {
+    return errorResponse('Identitas produk (Barcode/Nama/_sheetRow) kosong, tidak bisa hapus');
+  }
+
   initSheets();
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var pSheet = ss.getSheetByName("DatabaseProduk");
   var bSheet = ss.getSheetByName("StokBatch");
-  
-  // 1. Hapus dari DatabaseProduk
+  if (!pSheet) return errorResponse('Sheet "DatabaseProduk" tidak ditemukan');
+
+  // 1. Hapus dari DatabaseProduk (cocokkan _sheetRow → barcode → nama)
   var pTable = pSheet.getDataRange().getDisplayValues();
-  var pBarcodeCol = pTable[0].indexOf("Barcode_ID");
-  for (var i = 1; i < pTable.length; i++) {
-    if (pTable[i][pBarcodeCol].toString() === data.Barcode_ID.toString()) {
-      pSheet.deleteRow(i + 1);
-      break;
+  var pBarcodeCol = findHeaderCol(pTable[0], ["Barcode_ID", "Barcode", "Kode"]); if (pBarcodeCol === -1) pBarcodeCol = 0;
+  var pNameCol = findHeaderCol(pTable[0], ["Nama_Camilan", "Nama", "Nama_Produk"]); if (pNameCol === -1) pNameCol = 1;
+  var deletedProduct = false;
+
+  if (sheetRow >= 2 && sheetRow <= pTable.length) {
+    pSheet.deleteRow(sheetRow);
+    deletedProduct = true;
+  } else {
+    for (var i = 1; i < pTable.length; i++) {
+      var rowBc = pTable[i][pBarcodeCol] ? pTable[i][pBarcodeCol].toString().trim().toLowerCase() : '';
+      var rowNm = pTable[i][pNameCol] ? pTable[i][pNameCol].toString().trim().toLowerCase() : '';
+      var match = (targetBc !== '' && rowBc === targetBc) || (targetBc === '' && targetNm !== '' && rowNm === targetNm);
+      if (match) {
+        pSheet.deleteRow(i + 1);
+        deletedProduct = true;
+        break;
+      }
     }
   }
-  
-  // 2. Hapus seluruh batch yang bersangkutan dari StokBatch
-  var bTable = bSheet.getDataRange().getDisplayValues();
-  var bBarcodeCol = bTable[0].indexOf("Barcode_ID");
-  for (var j = bTable.length - 1; j >= 1; j--) {
-    if (bTable[j][bBarcodeCol].toString() === data.Barcode_ID.toString()) {
-      bSheet.deleteRow(j + 1);
+
+  // 2. Hapus seluruh batch terkait di StokBatch (cocokkan barcode ATAU nama), dari bawah ke atas
+  if (bSheet) {
+    var bTable = bSheet.getDataRange().getDisplayValues();
+    if (bTable.length > 1) {
+      var bBarcodeCol = findHeaderCol(bTable[0], ["Barcode_ID", "Barcode", "Kode"]);
+      var bNameCol = findHeaderCol(bTable[0], ["Nama_Camilan", "Nama", "Nama_Produk"]);
+      for (var j = bTable.length - 1; j >= 1; j--) {
+        var bBc = (bBarcodeCol > -1 && bTable[j][bBarcodeCol]) ? bTable[j][bBarcodeCol].toString().trim().toLowerCase() : '';
+        var bNm = (bNameCol > -1 && bTable[j][bNameCol]) ? bTable[j][bNameCol].toString().trim().toLowerCase() : '';
+        var bMatch = (targetBc !== '' && bBc === targetBc) || (targetNm !== '' && bNm === targetNm);
+        if (bMatch) {
+          bSheet.deleteRow(j + 1);
+        }
+      }
     }
   }
-  
+
+  if (!deletedProduct) {
+    return successResponse('Produk tidak ditemukan di sheet (mungkin sudah terhapus). Batch terkait tetap dibersihkan.');
+  }
   return successResponse('Produk dan seluruh batch berhasil dihapus');
 }
 
@@ -1018,11 +1099,13 @@ function deleteProduct(data) {
 
 function parseDate(dateStr) {
   if (dateStr instanceof Date) return dateStr;
+  if (dateStr === null || dateStr === undefined || dateStr === '') return new Date(0);
   var parts = dateStr.toString().split("/");
   if (parts.length === 3) {
     return new Date(parts[2], parts[1] - 1, parts[0]);
   }
-  return new Date(dateStr);
+  var d = new Date(dateStr);
+  return isNaN(d.getTime()) ? new Date(0) : d;
 }
 
 function formatDate(date) {
@@ -1046,11 +1129,18 @@ function errorResponse(msg) {
 
 // Tambahkan batch baru saat melakukan restok produk
 function processRestock(data) {
+  if (!data || typeof data !== 'object') return errorResponse('Data restok tidak valid');
+  var qtyVal = cleanNumber(data.qty);
+  if (qtyVal <= 0) return errorResponse('Jumlah restok harus lebih dari 0');
+  if ((!data.Barcode_ID || data.Barcode_ID.toString().trim() === '') &&
+      (!data.Nama_Camilan || data.Nama_Camilan.toString().trim() === '')) {
+    return errorResponse('Restok wajib menyertakan Barcode atau Nama produk');
+  }
   initSheets();
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var bSheet = ss.getSheetByName("StokBatch");
   if (!bSheet) return errorResponse('Sheet "StokBatch" tidak ditemukan');
-  
+
   var bHeaders = bSheet.getDataRange().getDisplayValues()[0];
   var bIdCol = findHeaderCol(bHeaders, ["Batch_ID", "Batch ID"]); if (bIdCol === -1) bIdCol = 0;
   var bBarcodeCol = findHeaderCol(bHeaders, ["Barcode_ID", "Barcode"]); if (bBarcodeCol === -1) bBarcodeCol = 1;
@@ -1076,8 +1166,8 @@ function processRestock(data) {
   if (bNameCol > -1) row[bNameCol] = name;
   if (bMasukCol > -1) row[bMasukCol] = tanggalMasuk;
   if (bExpCol > -1) row[bExpCol] = tanggalExpired;
-  if (bAwalCol > -1) row[bAwalCol] = data.qty;
-  if (bSisaCol > -1) row[bSisaCol] = data.qty;
+  if (bAwalCol > -1) row[bAwalCol] = qtyVal;
+  if (bSisaCol > -1) row[bSisaCol] = qtyVal;
   if (bBuyCol > -1) row[bBuyCol] = hargaBeli;
   if (bStatusCol > -1) row[bStatusCol] = "Ready";
   
@@ -1088,6 +1178,7 @@ function processRestock(data) {
 }
 
 function saveSettings(data) {
+  if (!data || typeof data !== 'object') return errorResponse('Data pengaturan tidak valid');
   initSheets();
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var sheet = ss.getSheetByName("Pengaturan");
@@ -1115,6 +1206,7 @@ function saveSettings(data) {
 }
 
 function updateBatch(data) {
+  if (!data || typeof data !== 'object') return errorResponse('Data update batch tidak valid');
   initSheets();
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var bSheet = ss.getSheetByName("StokBatch");
@@ -1133,12 +1225,14 @@ function updateBatch(data) {
   var updatedCount = 0;
   
   for (var b = 0; b < batches.length; b++) {
-    var batchId = batches[b].batchId;
-    var newStok = parseInt(batches[b].stokSisa) || 0;
-    var newBuy = batches[b].hargaBeli !== undefined ? (parseInt(batches[b].hargaBeli) || 0) : null;
-    
+    if (!batches[b] || batches[b].batchId === undefined || batches[b].batchId === null) continue;
+    var batchId = batches[b].batchId.toString().trim();
+    if (batchId === '') continue;
+    var newStok = Math.max(0, cleanNumber(batches[b].stokSisa));
+    var newBuy = batches[b].hargaBeli !== undefined ? Math.max(0, cleanNumber(batches[b].hargaBeli)) : null;
+
     for (var i = 1; i < bData.length; i++) {
-      if (bData[i][bIdCol] === batchId) {
+      if (bData[i][bIdCol] !== '' && bData[i][bIdCol].toString().trim() === batchId) {
         bSheet.getRange(i + 1, bSisaCol + 1).setValue(newStok);
         if (bStatusCol > -1) {
           bSheet.getRange(i + 1, bStatusCol + 1).setValue(newStok > 0 ? 'Ready' : 'Habis');
@@ -1157,6 +1251,10 @@ function updateBatch(data) {
 }
 
 function deleteTransaction(data) {
+  if (!data || data.id === undefined || data.id === null || data.id.toString().trim() === '') {
+    return errorResponse('Data hapus transaksi tidak valid (ID kosong)');
+  }
+  var targetTrxId = data.id.toString().trim();
   initSheets();
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   var tSheet = ss.getSheetByName("DatabaseTransaksi");
@@ -1175,8 +1273,11 @@ function deleteTransaction(data) {
       data.batchDeductions.forEach(function(bd) {
         if (bd.deductions && Array.isArray(bd.deductions)) {
           bd.deductions.forEach(function(d) {
+            if (!d || d.batchId === undefined || d.batchId === null) return;
+            var dBatchId = d.batchId.toString().trim();
+            if (dBatchId === '') return;
             for (var row = 1; row < bData.length; row++) {
-              if (bData[row][bIdCol].toString().trim() === d.batchId.toString().trim()) {
+              if (bData[row][bIdCol].toString().trim() === dBatchId) {
                 var currentSisa = parseInt(bData[row][bSisaCol]) || 0;
                 var restoredSisa = currentSisa + (parseInt(d.qty) || 0);
                 bSheet.getRange(row + 1, bSisaCol + 1).setValue(restoredSisa);
@@ -1200,12 +1301,12 @@ function deleteTransaction(data) {
   if (idCol === -1) idCol = 0;
   
   for (var i = 1; i < tData.length; i++) {
-    if (tData[i][idCol].toString().trim() === data.id.toString().trim()) {
+    if (tData[i][idCol].toString().trim() === targetTrxId) {
       tSheet.deleteRow(i + 1);
-      return successResponse('Transaksi ' + data.id + ' berhasil dihapus & stok dikembalikan di Google Sheets');
+      return successResponse('Transaksi ' + targetTrxId + ' berhasil dihapus & stok dikembalikan di Google Sheets');
     }
   }
-  return successResponse('Transaksi ' + data.id + ' tidak ditemukan di Google Sheets');
+  return successResponse('Transaksi ' + targetTrxId + ' tidak ditemukan di Google Sheets');
 }
 
 // Hitung ulang HPP dan Laba Bersih seluruh transaksi di DatabaseTransaksi berdasarkan Harga_Modal terbaru
