@@ -726,8 +726,8 @@ const app = {
         }
     },
 
-    // Ubah jumlah bonus (gratis) sebuah item di keranjang. delta = +1 / -1.
-    adjustBonusQty: function(identifier, delta) {
+    // Ketuk tombol 🎁 pada item → tanya jumlah pcs bonus gratis (di luar qty berbayar).
+    promptBonusQty: function(identifier) {
         const item = this.state.cart.find(x =>
             (x.Barcode_ID && compareBarcode(x.Barcode_ID, identifier)) ||
             (x.Nama_Camilan === identifier.toString())
@@ -740,8 +740,28 @@ const app = {
                 item.editPrice = parseInt(item.originalPrice) || 0;
             }
         }
-        item.bonusQty = Math.max(0, (parseInt(item.bonusQty) || 0) + delta);
-        this.updateCartUI();
+        const current = parseInt(item.bonusQty) || 0;
+        Swal.fire({
+            title: '🎁 Bonus Gratis',
+            html: `<div style="font-weight:600; color:#334155; margin-bottom:4px;">${item.Nama_Camilan}</div>
+                   <div style="font-size:0.82rem; color:#94a3b8;">Jumlah pcs GRATIS (di luar qty berbayar). Isi 0 untuk membatalkan bonus.</div>`,
+            input: 'number',
+            inputValue: current,
+            inputAttributes: { min: '0', step: '1', inputmode: 'numeric' },
+            showCancelButton: true,
+            confirmButtonText: 'Simpan',
+            cancelButtonText: 'Batal',
+            confirmButtonColor: '#8b5cf6',
+            didOpen: () => { const inp = Swal.getInput(); if (inp) { inp.focus(); inp.select(); } }
+        }).then((res) => {
+            if (res.isConfirmed) {
+                item.bonusQty = Math.max(0, parseInt(res.value) || 0);
+                this.updateCartUI();
+                if (item.bonusQty > 0) {
+                    Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: `Bonus ${item.bonusQty} pcs ${item.Nama_Camilan} (gratis)`, showConfirmButton: false, timer: 1500 });
+                }
+            }
+        });
     },
 
     updateCartItem: function(identifier, field, value) {
@@ -951,6 +971,10 @@ const app = {
                 div.className = 'cart-item';
                 const idKey = (item.Barcode_ID && item.Barcode_ID.toString().trim() !== "") ? item.Barcode_ID.toString().trim() : item.Nama_Camilan;
                 const bonusBadge = bonusQty > 0 ? ` <span style="background:#8b5cf6; color:white; padding:1px 6px; border-radius:4px; font-size:0.72rem; font-weight:700;">🎁 +${bonusQty} GRATIS</span>` : '';
+                // Tombol bonus ringkas: normal = abu-abu (🎁), aktif = ungu berisi jumlah. Ketuk untuk atur/ubah.
+                const giftBtnStyle = bonusQty > 0
+                    ? 'background:#8b5cf6; color:#fff; border:none;'
+                    : 'background:#f1f5f9; color:#94a3b8; border:1px solid #e2e8f0;';
 
                 div.innerHTML = `
                     <div class="item-header">
@@ -965,15 +989,9 @@ const app = {
                             <button class="qty-btn" onclick="app.updateCartItem('${idKey}', 'qty', ${paidQty - 1})">-</button>
                             <input type="number" class="qty-input" value="${paidQty}" oninput="app.updateCartItemVal('${idKey}', 'qty', this)" onblur="app.cleanCartItemInput('${idKey}', 'qty', this)">
                             <button class="qty-btn" onclick="app.updateCartItem('${idKey}', 'qty', ${paidQty + 1})">+</button>
+                            <button class="qty-btn" title="Beri bonus gratis" onclick="app.promptBonusQty('${idKey}')" style="${giftBtnStyle} font-size:0.85rem; ${bonusQty > 0 ? 'min-width:34px; font-weight:700;' : ''}">🎁${bonusQty > 0 ? ' ' + bonusQty : ''}</button>
                             <button class="qty-btn del" onclick="app.removeCartItem('${idKey}')"><i class="fas fa-trash"></i></button>
                         </div>
-                    </div>
-                    <div class="bonus-editor" style="display:flex; align-items:center; gap:6px; margin-top:6px; padding-top:6px; border-top:1px dashed #e2e8f0; font-size:0.82rem;">
-                        <span style="color:#8b5cf6; font-weight:600;">🎁 Bonus gratis:</span>
-                        <button class="qty-btn" onclick="app.adjustBonusQty('${idKey}', -1)">-</button>
-                        <input type="number" class="qty-input" value="${bonusQty}" min="0" oninput="app.updateCartItemVal('${idKey}', 'bonusQty', this)" style="width:44px;">
-                        <button class="qty-btn" onclick="app.adjustBonusQty('${idKey}', 1)">+</button>
-                        <span style="color:#94a3b8;">pcs</span>
                     </div>
                 `;
                 container.appendChild(div);
