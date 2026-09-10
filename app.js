@@ -660,8 +660,8 @@ const app = {
             return x.Nama_Camilan === product.Nama_Camilan;
         });
 
-        // Total pcs di keranjang = berbayar + bonus (keduanya mengurangi stok)
-        const qtyInCart = existing ? ((parseInt(existing.qty) || 0) + (parseInt(existing.bonusQty) || 0)) : 0;
+        // Total pcs di keranjang (semuanya berbayar, mengurangi stok)
+        const qtyInCart = existing ? (parseInt(existing.qty) || 0) : 0;
         const willExceed = qtyInCart >= currentStok;
 
         // Jika stok habis/melebihi DAN belum di-override → tanya kasir
@@ -694,7 +694,7 @@ const app = {
         if(existing) {
             existing.qty = (parseInt(existing.qty) || 0) + 1;
         } else {
-            this.state.cart.push({ ...product, qty: 1, bonusQty: 0, editPrice: parseInt(product.Harga) || 0 });
+            this.state.cart.push({ ...product, qty: 1, editPrice: parseInt(product.Harga) || 0 });
         }
         this.updateCartUI();
 
@@ -717,44 +717,6 @@ const app = {
         } else {
             Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: `${product.Nama_Camilan} ditambahkan (Sisa: ${sisaSetelah})`, showConfirmButton: false, timer: 1500 });
         }
-    },
-
-    // Ketuk tombol 🎁 pada item → tanya jumlah pcs bonus gratis (di luar qty berbayar).
-    promptBonusQty: function(identifier) {
-        const item = this.state.cart.find(x =>
-            (x.Barcode_ID && compareBarcode(x.Barcode_ID, identifier)) ||
-            (x.Nama_Camilan === identifier.toString())
-        );
-        if (!item) return;
-        // Normalisasi bila item ini masih format bonus lama (seluruh baris gratis)
-        if (item.isBonus) {
-            item.isBonus = false;
-            if ((!item.editPrice || item.editPrice === 0) && item.originalPrice !== undefined) {
-                item.editPrice = parseInt(item.originalPrice) || 0;
-            }
-        }
-        const current = parseInt(item.bonusQty) || 0;
-        Swal.fire({
-            title: '🎁 Bonus Gratis',
-            html: `<div style="font-weight:600; color:#334155; margin-bottom:4px;">${item.Nama_Camilan}</div>
-                   <div style="font-size:0.82rem; color:#94a3b8;">Jumlah pcs GRATIS (di luar qty berbayar). Isi 0 untuk membatalkan bonus.</div>`,
-            input: 'number',
-            inputValue: current,
-            inputAttributes: { min: '0', step: '1', inputmode: 'numeric' },
-            showCancelButton: true,
-            confirmButtonText: 'Simpan',
-            cancelButtonText: 'Batal',
-            confirmButtonColor: '#8b5cf6',
-            didOpen: () => { const inp = Swal.getInput(); if (inp) { inp.focus(); inp.select(); } }
-        }).then((res) => {
-            if (res.isConfirmed) {
-                item.bonusQty = Math.max(0, parseInt(res.value) || 0);
-                this.updateCartUI();
-                if (item.bonusQty > 0) {
-                    Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: `Bonus ${item.bonusQty} pcs ${item.Nama_Camilan} (gratis)`, showConfirmButton: false, timer: 1500 });
-                }
-            }
-        });
     },
 
     updateCartItem: function(identifier, field, value) {
@@ -825,7 +787,7 @@ const app = {
                 }
                 return c.Nama_Camilan === p.Nama_Camilan;
             });
-            const qtyInCart = inCart ? ((parseInt(inCart.qty) || 0) + (parseInt(inCart.bonusQty) || 0)) : 0;
+            const qtyInCart = inCart ? (parseInt(inCart.qty) || 0) : 0;
             const currentStok = parseInt(p.Stok) || 0;
             const sisaStok = currentStok - qtyInCart;
 
@@ -873,8 +835,6 @@ const app = {
                 item.editPrice = Math.max(0, val);
             } else if (field === 'qty') {
                 item.qty = Math.max(0, val);
-            } else if (field === 'bonusQty') {
-                item.bonusQty = Math.max(0, val);
             }
 
             // Hitung ulang total tanpa rebuild list DOM (pendapatan = qty berbayar × harga; item = berbayar + bonus)
@@ -947,31 +907,17 @@ const app = {
             document.getElementById('processCheckoutBtn').disabled = false;
             
             this.state.cart.forEach(item => {
-                const q = this._itemQtys(item);
-                // Normalisasi item bonus format lama ke model baru saat dirender agar UI konsisten
-                if (item.isBonus) {
-                    item.isBonus = false;
-                    item.qty = q.paid;
-                    item.bonusQty = q.bonus;
-                    item.editPrice = q.unit;
-                }
                 const paidQty = parseInt(item.qty) || 0;
-                const bonusQty = parseInt(item.bonusQty) || 0;
                 subtotal += (item.editPrice || 0) * paidQty;
-                count += paidQty + bonusQty;
+                count += paidQty;
 
                 const div = document.createElement('div');
                 div.className = 'cart-item';
                 const idKey = (item.Barcode_ID && item.Barcode_ID.toString().trim() !== "") ? item.Barcode_ID.toString().trim() : item.Nama_Camilan;
-                const bonusBadge = bonusQty > 0 ? ` <span style="background:#8b5cf6; color:white; padding:1px 6px; border-radius:4px; font-size:0.72rem; font-weight:700;">🎁 +${bonusQty} GRATIS</span>` : '';
-                // Tombol bonus ringkas: normal = abu-abu (🎁), aktif = ungu berisi jumlah. Ketuk untuk atur/ubah.
-                const giftBtnStyle = bonusQty > 0
-                    ? 'background:#8b5cf6; color:#fff; border:none;'
-                    : 'background:#f1f5f9; color:#94a3b8; border:1px solid #e2e8f0;';
 
                 div.innerHTML = `
                     <div class="item-header">
-                        <span>${item.Nama_Camilan}${bonusBadge}</span>
+                        <span>${item.Nama_Camilan}</span>
                         <span>${formatRupiah((item.editPrice || 0) * paidQty)}</span>
                     </div>
                     <div class="item-editor">
@@ -982,7 +928,6 @@ const app = {
                             <button class="qty-btn" onclick="app.updateCartItem('${idKey}', 'qty', ${paidQty - 1})">-</button>
                             <input type="number" class="qty-input" value="${paidQty}" oninput="app.updateCartItemVal('${idKey}', 'qty', this)" onblur="app.cleanCartItemInput('${idKey}', 'qty', this)">
                             <button class="qty-btn" onclick="app.updateCartItem('${idKey}', 'qty', ${paidQty + 1})">+</button>
-                            <button class="qty-btn" title="Beri bonus gratis" onclick="app.promptBonusQty('${idKey}')" style="${giftBtnStyle} font-size:0.85rem; ${bonusQty > 0 ? 'min-width:34px; font-weight:700;' : ''}">🎁${bonusQty > 0 ? ' ' + bonusQty : ''}</button>
                             <button class="qty-btn del" onclick="app.removeCartItem('${idKey}')"><i class="fas fa-trash"></i></button>
                         </div>
                     </div>
