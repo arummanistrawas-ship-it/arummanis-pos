@@ -1486,6 +1486,34 @@ const app = {
 
     tierPersen: function(tier) { return MITRA_TIERS[tier] || 0; },
 
+    // Hitung tier otomatis dari performa bulan berjalan.
+    // kunjungan = jumlah sesi rombongan + hari-berbeda transaksi manual (lepasan).
+    computeMitraTier: function(kode) {
+        const month = this._localYMD().slice(0, 7);
+        const sesiSet = new Set();
+        const manualDays = new Set();
+        let omset = 0;
+        (this.state.komisiLog || []).forEach(k => {
+            if (k.mitraKode !== kode) return;
+            if ((this._localYMD(k.timestamp) || '').slice(0, 7) !== month) return;
+            omset += cleanNumber(k.omset) || 0;
+            if (k.sesiId) sesiSet.add(k.sesiId);
+            else manualDays.add(this._localYMD(k.timestamp));
+        });
+        const kunjungan = sesiSet.size + manualDays.size;
+        let tier = 'Biasa';
+        if (kunjungan >= 8 || omset > 5000000) tier = 'Premium';
+        else if (kunjungan >= 4) tier = 'Aktif';
+        return { tier, kunjungan, omset };
+    },
+
+    // Tier efektif: manual (tier tertentu) menang; 'Auto'/kosong → dihitung dari performa.
+    effectiveTier: function(mitra) {
+        if (!mitra) return 'Biasa';
+        if (mitra.tier && mitra.tier !== 'Auto') return mitra.tier;
+        return this.computeMitraTier(mitra.kode).tier;
+    },
+
     findMitra: function(kode) {
         if (!kode) return null;
         const k = kode.toString().trim().toLowerCase();
@@ -1516,7 +1544,6 @@ const app = {
         const container = document.getElementById('mitraList');
         if (!container) return;
         const term = (document.getElementById('searchMitraInput')?.value || '').trim().toLowerCase();
-        const thisMonth = this._localYMD().slice(0, 7);
         let list = this.state.mitra.slice();
         if (term) {
             list = list.filter(m =>
@@ -1531,10 +1558,12 @@ const app = {
         }
         container.innerHTML = '';
         list.forEach(m => {
-            const persen = this.tierPersen(m.tier);
-            const trxBulan = (this.state.komisiLog || []).filter(k => k.mitraKode === m.kode && (this._localYMD(k.timestamp) || '').slice(0, 7) === thisMonth).length;
+            const isAuto = (!m.tier || m.tier === 'Auto');
+            const perf = this.computeMitraTier(m.kode);
+            const eff = this.effectiveTier(m);
+            const persen = this.tierPersen(eff);
             const nonaktif = m.status === 'nonaktif';
-            const tierColor = m.tier === 'Premium' ? '#8b5cf6' : (m.tier === 'Aktif' ? '#0ea5e9' : '#64748b');
+            const tierColor = eff === 'Premium' ? '#8b5cf6' : (eff === 'Aktif' ? '#0ea5e9' : '#64748b');
             const div = document.createElement('div');
             div.className = 'product-card';
             div.style.cssText = 'display:flex; justify-content:space-between; align-items:flex-start; gap:10px;' + (nonaktif ? 'opacity:0.55;' : '');
@@ -1543,10 +1572,11 @@ const app = {
                     <div style="font-weight:700; color:#1e293b;">${m.nama}${nonaktif ? ' <span style="font-size:0.72rem; color:#ef4444;">(nonaktif)</span>' : ''}</div>
                     <div style="font-family:monospace; font-size:0.8rem; color:#475569; margin-top:2px;">${m.kode}</div>
                     <div style="font-size:0.78rem; color:#94a3b8; margin-top:2px;">
-                        <span style="background:${tierColor}; color:#fff; padding:1px 7px; border-radius:10px; font-weight:600;">${m.tier} ${persen}%</span>
+                        <span style="background:${tierColor}; color:#fff; padding:1px 7px; border-radius:10px; font-weight:600;">${eff} ${persen}%</span>
+                        <span style="color:${isAuto ? '#16a34a' : '#f59e0b'}; font-weight:600;"> ${isAuto ? 'auto' : 'manual'}</span>
                         ${m.hp ? ` · ${m.hp}` : ''}${m.travel ? ` · ${m.travel}` : ''}
                     </div>
-                    <div style="font-size:0.74rem; color:#94a3b8; margin-top:3px;">${trxBulan} transaksi bulan ini</div>
+                    <div style="font-size:0.74rem; color:#94a3b8; margin-top:3px;">${perf.kunjungan} kunjungan · omset ${formatRupiah(perf.omset)} bln ini</div>
                 </div>
                 <div style="display:flex; flex-direction:column; gap:5px;">
                     <button class="btn btn-sm btn-secondary" onclick="app.showMitraForm('${m.kode}')" style="font-size:0.75rem;"><i class="fas fa-edit"></i></button>
@@ -1558,8 +1588,15 @@ const app = {
 
     showMitraForm: function(kode) {
         const m = kode ? this.findMitra(kode) : null;
-        const tierOptions = Object.keys(MITRA_TIERS).map(t =>
-            `<option value="${t}" ${m && m.tier === t ? 'selected' : ''}>${t} (${MITRA_TIERS[t]}%)</option>`).join('');
+        const curTier = m ? (m.tier || 'Auto') : 'Auto';
+        const tierOptions = `<option value="Auto" ${curTier === 'Auto' ? 'selected' : ''}>Otomatis (dari performa)</option>` +
+            Object.keys(MITRA_TIERS).map(t =>
+                `<option value="${t}" ${curTier === t ? 'selected' : ''}>${t} (${MITRA_TIERS[t]}%) — kunci manual</option>`).join('');
+        let perfHint = '';
+        if (m) {
+            const pf = this.computeMitraTier(m.kode);
+            perfHint = `<div style="font-size:0.78rem; color:#64748b; margin-top:8px; background:#f8fafc; padding:6px 8px; border-radius:6px;">Bulan ini: <b>${pf.kunjungan}</b> kunjungan · omset <b>${formatRupiah(pf.omset)}</b> → tier otomatis: <b>${pf.tier} (${this.tierPersen(pf.tier)}%)</b></div>`;
+        }
         Swal.fire({
             title: m ? 'Edit Mitra' : 'Daftar Mitra Baru',
             html: `
@@ -1572,6 +1609,7 @@ const app = {
                     <input id="mf_travel" class="swal2-input" style="margin:4px 0 10px;" placeholder="Cth: Trip Hotel X" value="${m ? (m.travel || '') : ''}">
                     <label style="font-weight:600; color:#475569;">Tier Komisi</label>
                     <select id="mf_tier" class="swal2-select" style="margin:4px 0; width:100%;">${tierOptions}</select>
+                    ${perfHint}
                     ${m ? `<div style="font-family:monospace; font-size:0.8rem; color:#94a3b8; margin-top:8px;">Kode: ${m.kode}</div>` : ''}
                 </div>`,
             showCancelButton: true,
@@ -1632,7 +1670,7 @@ const app = {
             }).then(r => { if (r.isConfirmed) this.navigate('mitra'); });
             return;
         }
-        const opts = aktif.map(m => `<option value="${m.kode}">${m.nama} · ${m.tier} ${this.tierPersen(m.tier)}% (${m.kode})</option>`).join('');
+        const opts = aktif.map(m => { const t = this.effectiveTier(m); return `<option value="${m.kode}">${m.nama} · ${t} ${this.tierPersen(t)}% (${m.kode})</option>`; }).join('');
         Swal.fire({
             title: '🚐 Buka Rombongan',
             html: `
@@ -1657,7 +1695,7 @@ const app = {
             const m = this.findMitra(res.value.kode);
             const sesiId = 'SES-' + Date.now();
             this.state.mitraSessions.unshift({
-                sesiId, mitraKode: m.kode, mitraNama: m.nama, mitraTier: m.tier,
+                sesiId, mitraKode: m.kode, mitraNama: m.nama, mitraTier: this.effectiveTier(m),
                 label: res.value.label, pax: res.value.pax,
                 openedAt: new Date().toISOString(), closedAt: null
             });
@@ -1718,6 +1756,8 @@ const app = {
         open.forEach(s => {
             const st = this.sessionStats(s.sesiId);
             const sel = this.state.activeSessionId === s.sesiId;
+            const mt = this.findMitra(s.mitraKode);
+            const sTier = mt ? this.effectiveTier(mt) : s.mitraTier;
             const chip = document.createElement('div');
             chip.style.cssText = `flex:1; min-width:150px; border-radius:12px; padding:8px 10px; cursor:pointer; ${sel ? 'background:#FAECE7; border:2px solid #D85A30;' : 'background:#f8fafc; border:1px solid #e2e8f0;'}`;
             chip.onclick = () => this.selectSession(s.sesiId);
@@ -1726,7 +1766,7 @@ const app = {
                     <span style="font-weight:700; font-size:0.84rem; color:${sel ? '#712B13' : '#1e293b'}; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">🚐 ${s.mitraNama}</span>
                     <span onclick="event.stopPropagation(); app.closeSession('${s.sesiId}')" title="Tutup sesi" style="color:#94a3b8; font-size:0.9rem; padding:0 2px;"><i class="fas fa-times-circle"></i></span>
                 </div>
-                <div style="font-size:0.72rem; color:${sel ? '#993C1D' : '#94a3b8'}; margin-top:1px;">${s.label ? s.label + ' · ' : ''}${s.mitraTier} ${this.tierPersen(s.mitraTier)}%</div>
+                <div style="font-size:0.72rem; color:${sel ? '#993C1D' : '#94a3b8'}; margin-top:1px;">${s.label ? s.label + ' · ' : ''}${sTier} ${this.tierPersen(sTier)}%</div>
                 <div style="display:flex; justify-content:space-between; margin-top:4px; font-size:0.78rem; color:${sel ? '#712B13' : '#475569'};">
                     <span><i class="fas fa-users"></i> ${st.trxCount}${s.pax ? '/' + s.pax : ''}</span>
                     <span style="font-weight:600;">${formatRupiah(st.omset)}</span>
@@ -1743,7 +1783,7 @@ const app = {
             const s = this.state.mitraSessions.find(x => x.sesiId === this.state.activeSessionId && !x.closedAt);
             if (s) {
                 const m = this.findMitra(s.mitraKode);
-                const tier = m ? m.tier : s.mitraTier;
+                const tier = m ? this.effectiveTier(m) : s.mitraTier;
                 return { kode: s.mitraKode, nama: s.mitraNama, tier, persen: this.tierPersen(tier), sesiId: s.sesiId };
             }
         }
@@ -1753,7 +1793,8 @@ const app = {
         if (code) {
             const m = this.findMitra(code);
             if (m && m.status !== 'nonaktif') {
-                return { kode: m.kode, nama: m.nama, tier: m.tier, persen: this.tierPersen(m.tier), sesiId: null };
+                const tier = this.effectiveTier(m);
+                return { kode: m.kode, nama: m.nama, tier, persen: this.tierPersen(tier), sesiId: null };
             }
         }
         return null;
