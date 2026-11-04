@@ -205,7 +205,10 @@
                     
                     <div id="checkoutReferralWrap" class="form-group">
                         <label><i class="fas fa-bus"></i> Kode Referral Mitra (opsional)</label>
-                        <input type="text" id="checkoutReferral" class="input-full" placeholder="Cth: LKT-BUDI-01" autocomplete="off" oninput="app.updateCheckoutMitraInfo()">
+                        <div style="position: relative;">
+                            <input type="text" id="checkoutReferral" class="input-full" placeholder="Ketik nama / kode mitra..." autocomplete="off" oninput="app.onReferralInput(this.value)" onblur="setTimeout(() => { const s = document.getElementById('checkoutReferralSuggestions'); if (s) s.classList.add('hidden'); }, 200)">
+                            <div id="checkoutReferralSuggestions" class="search-suggestions hidden"></div>
+                        </div>
                     </div>
                     <div id="checkoutMitraInfo" style="display:none; margin-bottom:10px;"></div>
 

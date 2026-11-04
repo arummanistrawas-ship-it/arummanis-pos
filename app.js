@@ -1138,6 +1138,8 @@ const app = {
         // Reset kode referral manual & tampilkan info mitra (sesi aktif / kosong)
         const refInput = document.getElementById('checkoutReferral');
         if (refInput) refInput.value = '';
+        const refSug = document.getElementById('checkoutReferralSuggestions');
+        if (refSug) { refSug.classList.add('hidden'); refSug.innerHTML = ''; }
         this.updateCheckoutMitraInfo();
 
         this.navigate('checkout');
@@ -1837,6 +1839,48 @@ const app = {
             }
         }
         return null;
+    },
+
+    // Autocomplete kode referral di checkout: ketik nama/kode/travel → saran mitra
+    onReferralInput: function(val) {
+        this.renderReferralSuggestions(val);
+        this.updateCheckoutMitraInfo();
+    },
+
+    renderReferralSuggestions: function(term) {
+        const box = document.getElementById('checkoutReferralSuggestions');
+        if (!box) return;
+        const q = (term || '').trim().toLowerCase();
+        if (!q) { box.classList.add('hidden'); box.innerHTML = ''; return; }
+        const matches = this.state.mitra.filter(m => m.status !== 'nonaktif' &&
+            (`${m.nama} ${m.kode} ${m.travel || ''}`.toLowerCase().indexOf(q) > -1));
+        if (matches.length === 0) {
+            box.innerHTML = '<div class="suggestion-item" style="color:#94a3b8; cursor:default;">Mitra tidak ditemukan</div>';
+            box.classList.remove('hidden');
+            return;
+        }
+        box.innerHTML = '';
+        matches.slice(0, 20).forEach(m => {
+            const t = this.effectiveTier(m);
+            const item = document.createElement('div');
+            item.className = 'suggestion-item';
+            item.innerHTML = `
+                <div class="suggestion-info">
+                    <div class="suggestion-name">${m.nama} <span style="font-size:0.75rem; color:#8b5cf6;">${t} ${this.tierPersen(t)}%</span></div>
+                    <div class="suggestion-meta" style="font-family:monospace;">${m.kode}${m.travel ? ' · ' + m.travel : ''}</div>
+                </div>`;
+            item.addEventListener('mousedown', (e) => { e.preventDefault(); this.selectReferral(m.kode); });
+            box.appendChild(item);
+        });
+        box.classList.remove('hidden');
+    },
+
+    selectReferral: function(kode) {
+        const input = document.getElementById('checkoutReferral');
+        if (input) input.value = kode;
+        const box = document.getElementById('checkoutReferralSuggestions');
+        if (box) { box.classList.add('hidden'); box.innerHTML = ''; }
+        this.updateCheckoutMitraInfo();
     },
 
     updateCheckoutMitraInfo: function() {
