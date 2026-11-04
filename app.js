@@ -1,6 +1,9 @@
 // Konfigurasi GAS Web App URL
 let GAS_URL = localStorage.getItem('pos_gas_url') || 'https://script.google.com/macros/s/AKfycbxShfwNUtXVeZB_hReUyB8y5oRplJp2y2j-p-eoyiOmZcx_Ad6dhQZFlMIEsD2xgEMc-Q/exec';
 
+// Tier komisi mitra travel/sopir → persentase dari total belanja grup
+const MITRA_TIERS = { 'Biasa': 5, 'Aktif': 7, 'Premium': 10 };
+
 // Utility format uang
 const formatRupiah = (number) => {
     const val = new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', minimumFractionDigits: 0 }).format(parseFloat(number) || 0);
@@ -229,6 +232,10 @@ const app = {
         checkoutMode: 'new',
         repaymentTransactionId: null,
         savedTransactions: [],
+        mitra: [],              // Master mitra travel/sopir (referral)
+        mitraSessions: [],      // Sesi rombongan (buka/tutup)
+        komisiLog: [],          // Catatan komisi per transaksi (sumber kebenaran Laporan Mitra)
+        activeSessionId: null,  // Sesi rombongan terpilih utk transaksi berjalan
         settings: {
             shopName: 'Kasir Manis',
             shopAddress: 'Store Camilan dan Oleh-oleh',
@@ -419,8 +426,9 @@ const app = {
                     suggestionsBox.classList.add('hidden');
                     suggestionsBox.innerHTML = '';
                 }
-                this.updateCartUI(); 
-                this.refreshProductsFromServer(); 
+                this.updateCartUI();
+                this.renderSessionChips();
+                this.refreshProductsFromServer();
             }
             if(viewId === 'checkout') titleEl.textContent = 'Pembayaran';
             if(viewId === 'receipt') { titleEl.textContent = 'Struk Transaksi'; backBtn.classList.add('hidden'); }
@@ -430,6 +438,8 @@ const app = {
             if(viewId === 'settings') { titleEl.textContent = 'Pengaturan'; this.showSettingsForm(); }
             if(viewId === 'saved') { titleEl.textContent = 'Transaksi Tersimpan'; this.renderSavedTransactions(); }
             if(viewId === 'reports') { titleEl.textContent = 'Laporan Keuangan'; this.initReports(); this.refreshTransactionsFromServer(); }
+            if(viewId === 'mitra') { titleEl.textContent = 'Mitra Travel'; this.renderMitraList(); }
+            if(viewId === 'mitraReport') { titleEl.textContent = 'Laporan Mitra'; this.initMitraReport(); }
         }
     },
 
@@ -456,7 +466,18 @@ const app = {
         try {
             this.state.savedTransactions = JSON.parse(localStorage.getItem('pos_saved_transactions') || '[]');
         } catch (e) { this.state.savedTransactions = []; }
-        
+
+        // Load data Mitra Travel (referral/komisi)
+        try {
+            this.state.mitra = JSON.parse(localStorage.getItem('pos_mitra') || '[]');
+        } catch (e) { this.state.mitra = []; }
+        try {
+            this.state.mitraSessions = JSON.parse(localStorage.getItem('pos_mitra_sessions') || '[]');
+        } catch (e) { this.state.mitraSessions = []; }
+        try {
+            this.state.komisiLog = JSON.parse(localStorage.getItem('pos_komisi_log') || '[]');
+        } catch (e) { this.state.komisiLog = []; }
+
         this.checkOfflineQueue();
 
         // PENTING: jangan blokir startup menunggu server. Data lokal (cache) sudah dimuat di atas,
@@ -481,6 +502,9 @@ const app = {
         localStorage.setItem('pos_queue', JSON.stringify(this.state.syncQueue));
         localStorage.setItem('pos_settings', JSON.stringify(this.state.settings));
         localStorage.setItem('pos_saved_transactions', JSON.stringify(this.state.savedTransactions));
+        localStorage.setItem('pos_mitra', JSON.stringify(this.state.mitra));
+        localStorage.setItem('pos_mitra_sessions', JSON.stringify(this.state.mitraSessions));
+        localStorage.setItem('pos_komisi_log', JSON.stringify(this.state.komisiLog));
     },
 
     // --- POS & Cart Logic ---
@@ -1109,6 +1133,11 @@ const app = {
             }
         });
 
+        // Reset kode referral manual & tampilkan info mitra (sesi aktif / kosong)
+        const refInput = document.getElementById('checkoutReferral');
+        if (refInput) refInput.value = '';
+        this.updateCheckoutMitraInfo();
+
         this.navigate('checkout');
     },
 
@@ -1391,7 +1420,37 @@ const app = {
         });
         trx.batchDeductions = batchDeductions; // Store for rollback
         trx.hpp = localHPP;
-        trx.netProfit = (parseFloat(trx.total) || 0) - localHPP;
+
+        // --- Komisi Mitra Travel (referral) ---
+        // Atribusi dari sesi rombongan terpilih, atau kode referral manual di checkout.
+        const mitra = this.getCheckoutMitra();
+        let komisiAmount = 0;
+        if (mitra) {
+            komisiAmount = Math.round((parseFloat(trx.total) || 0) * mitra.persen / 100);
+            trx.mitraKode = mitra.kode;
+            trx.mitraNama = mitra.nama;
+            trx.mitraTier = mitra.tier;
+            trx.komisiPersen = mitra.persen;
+            trx.komisiAmount = komisiAmount;
+            trx.sesiId = mitra.sesiId || null;
+            // Catat di log komisi (sumber kebenaran Laporan Mitra, lepas dari sync server)
+            this.state.komisiLog.unshift({
+                id: trx.id,
+                timestamp: trx.timestamp,
+                mitraKode: mitra.kode,
+                mitraNama: mitra.nama,
+                tier: mitra.tier,
+                persen: mitra.persen,
+                omset: parseFloat(trx.total) || 0,
+                komisi: komisiAmount,
+                sesiId: mitra.sesiId || null,
+                paid: false,        // default: belum ditransfer ke sopir
+                paidAt: null,
+                paidMethod: null
+            });
+        }
+        // Laba bersih = omset − HPP − komisi (komisi diambil dari margin)
+        trx.netProfit = (parseFloat(trx.total) || 0) - localHPP - komisiAmount;
 
         // Insert at beginning
         this.state.transactions.unshift(trx);
@@ -1409,10 +1468,410 @@ const app = {
             suggestionsBox.classList.add('hidden');
             suggestionsBox.innerHTML = '';
         }
+        // Reset kode referral manual (sesi rombongan tetap terbuka utk transaksi berikutnya)
+        const refInput = document.getElementById('checkoutReferral');
+        if (refInput) refInput.value = '';
         this.updateCartUI();
-        
+        this.renderSessionChips();
+
         this.showReceipt(trx);
         this.syncData();
+    },
+
+    // ==================== MITRA TRAVEL (REFERRAL & KOMISI) ====================
+
+    tierPersen: function(tier) { return MITRA_TIERS[tier] || 0; },
+
+    findMitra: function(kode) {
+        if (!kode) return null;
+        const k = kode.toString().trim().toLowerCase();
+        return this.state.mitra.find(m => (m.kode || '').toLowerCase() === k) || null;
+    },
+
+    generateMitraKode: function(nama) {
+        const abbr = (nama || '').toUpperCase().replace(/[^A-Z]/g, '').slice(0, 4) || 'MTR';
+        let n = 1, kode;
+        do {
+            kode = 'LKT-' + abbr + '-' + String(n).padStart(2, '0');
+            n++;
+        } while (this.state.mitra.some(m => m.kode === kode));
+        return kode;
+    },
+
+    // Helper: tanggal lokal YYYY-MM-DD dari ISO/Date
+    _localYMD: function(ts) {
+        const d = ts ? new Date(ts) : new Date();
+        if (isNaN(d)) return '';
+        const mm = String(d.getMonth() + 1).padStart(2, '0');
+        const dd = String(d.getDate()).padStart(2, '0');
+        return `${d.getFullYear()}-${mm}-${dd}`;
+    },
+
+    // ---------- Daftar & CRUD Mitra ----------
+    renderMitraList: function() {
+        const container = document.getElementById('mitraList');
+        if (!container) return;
+        const term = (document.getElementById('searchMitraInput')?.value || '').trim().toLowerCase();
+        const thisMonth = this._localYMD().slice(0, 7);
+        let list = this.state.mitra.slice();
+        if (term) {
+            list = list.filter(m =>
+                (m.nama || '').toLowerCase().includes(term) ||
+                (m.kode || '').toLowerCase().includes(term) ||
+                (m.hp || '').toLowerCase().includes(term) ||
+                (m.travel || '').toLowerCase().includes(term));
+        }
+        if (list.length === 0) {
+            container.innerHTML = '<div class="empty-cart" style="padding:1.5rem;"><p>Belum ada mitra. Tekan "Daftar Mitra Baru".</p></div>';
+            return;
+        }
+        container.innerHTML = '';
+        list.forEach(m => {
+            const persen = this.tierPersen(m.tier);
+            const trxBulan = (this.state.komisiLog || []).filter(k => k.mitraKode === m.kode && (this._localYMD(k.timestamp) || '').slice(0, 7) === thisMonth).length;
+            const nonaktif = m.status === 'nonaktif';
+            const tierColor = m.tier === 'Premium' ? '#8b5cf6' : (m.tier === 'Aktif' ? '#0ea5e9' : '#64748b');
+            const div = document.createElement('div');
+            div.className = 'product-card';
+            div.style.cssText = 'display:flex; justify-content:space-between; align-items:flex-start; gap:10px;' + (nonaktif ? 'opacity:0.55;' : '');
+            div.innerHTML = `
+                <div style="flex:1; min-width:0;">
+                    <div style="font-weight:700; color:#1e293b;">${m.nama}${nonaktif ? ' <span style="font-size:0.72rem; color:#ef4444;">(nonaktif)</span>' : ''}</div>
+                    <div style="font-family:monospace; font-size:0.8rem; color:#475569; margin-top:2px;">${m.kode}</div>
+                    <div style="font-size:0.78rem; color:#94a3b8; margin-top:2px;">
+                        <span style="background:${tierColor}; color:#fff; padding:1px 7px; border-radius:10px; font-weight:600;">${m.tier} ${persen}%</span>
+                        ${m.hp ? ` · ${m.hp}` : ''}${m.travel ? ` · ${m.travel}` : ''}
+                    </div>
+                    <div style="font-size:0.74rem; color:#94a3b8; margin-top:3px;">${trxBulan} transaksi bulan ini</div>
+                </div>
+                <div style="display:flex; flex-direction:column; gap:5px;">
+                    <button class="btn btn-sm btn-secondary" onclick="app.showMitraForm('${m.kode}')" style="font-size:0.75rem;"><i class="fas fa-edit"></i></button>
+                    <button class="btn btn-sm ${nonaktif ? 'btn-success' : 'btn-warning'}" onclick="app.toggleMitraStatus('${m.kode}')" style="font-size:0.75rem;" title="${nonaktif ? 'Aktifkan' : 'Nonaktifkan'}"><i class="fas fa-power-off"></i></button>
+                </div>`;
+            container.appendChild(div);
+        });
+    },
+
+    showMitraForm: function(kode) {
+        const m = kode ? this.findMitra(kode) : null;
+        const tierOptions = Object.keys(MITRA_TIERS).map(t =>
+            `<option value="${t}" ${m && m.tier === t ? 'selected' : ''}>${t} (${MITRA_TIERS[t]}%)</option>`).join('');
+        Swal.fire({
+            title: m ? 'Edit Mitra' : 'Daftar Mitra Baru',
+            html: `
+                <div style="text-align:left; font-size:0.9rem;">
+                    <label style="font-weight:600; color:#475569;">Nama Sopir/Travel *</label>
+                    <input id="mf_nama" class="swal2-input" style="margin:4px 0 10px;" placeholder="Cth: Budi" value="${m ? (m.nama || '') : ''}">
+                    <label style="font-weight:600; color:#475569;">No. HP</label>
+                    <input id="mf_hp" class="swal2-input" style="margin:4px 0 10px;" placeholder="08xx" value="${m ? (m.hp || '') : ''}">
+                    <label style="font-weight:600; color:#475569;">Nama Travel / Kendaraan</label>
+                    <input id="mf_travel" class="swal2-input" style="margin:4px 0 10px;" placeholder="Cth: Trip Hotel X" value="${m ? (m.travel || '') : ''}">
+                    <label style="font-weight:600; color:#475569;">Tier Komisi</label>
+                    <select id="mf_tier" class="swal2-select" style="margin:4px 0; width:100%;">${tierOptions}</select>
+                    ${m ? `<div style="font-family:monospace; font-size:0.8rem; color:#94a3b8; margin-top:8px;">Kode: ${m.kode}</div>` : ''}
+                </div>`,
+            showCancelButton: true,
+            confirmButtonText: m ? 'Simpan' : 'Daftar',
+            cancelButtonText: 'Batal',
+            confirmButtonColor: '#10b981',
+            focusConfirm: false,
+            preConfirm: () => {
+                const nama = document.getElementById('mf_nama').value.trim();
+                if (!nama) { Swal.showValidationMessage('Nama wajib diisi'); return false; }
+                return {
+                    nama,
+                    hp: document.getElementById('mf_hp').value.trim(),
+                    travel: document.getElementById('mf_travel').value.trim(),
+                    tier: document.getElementById('mf_tier').value
+                };
+            }
+        }).then(res => {
+            if (!res.isConfirmed) return;
+            const d = res.value;
+            if (m) {
+                Object.assign(m, d);
+            } else {
+                this.state.mitra.push({
+                    kode: this.generateMitraKode(d.nama),
+                    nama: d.nama, hp: d.hp, travel: d.travel, tier: d.tier,
+                    status: 'aktif', catatan: '', createdAt: new Date().toISOString()
+                });
+            }
+            this.saveData();
+            this.renderMitraList();
+            Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: m ? 'Mitra diperbarui' : 'Mitra terdaftar', showConfirmButton: false, timer: 1400 });
+        });
+    },
+
+    toggleMitraStatus: function(kode) {
+        const m = this.findMitra(kode);
+        if (!m) return;
+        m.status = (m.status === 'nonaktif') ? 'aktif' : 'nonaktif';
+        this.saveData();
+        this.renderMitraList();
+    },
+
+    // ---------- Sesi Rombongan ----------
+    openSessionPrompt: function() {
+        const aktif = this.state.mitra.filter(m => m.status !== 'nonaktif');
+        if (aktif.length === 0) {
+            Swal.fire({
+                title: 'Belum ada mitra', text: 'Daftarkan mitra travel/sopir dulu di menu Mitra Travel.',
+                icon: 'info', confirmButtonText: 'Buka Mitra Travel', showCancelButton: true, cancelButtonText: 'Tutup'
+            }).then(r => { if (r.isConfirmed) this.navigate('mitra'); });
+            return;
+        }
+        const opts = aktif.map(m => `<option value="${m.kode}">${m.nama} · ${m.tier} ${this.tierPersen(m.tier)}% (${m.kode})</option>`).join('');
+        Swal.fire({
+            title: '🚐 Buka Rombongan',
+            html: `
+                <div style="text-align:left; font-size:0.9rem;">
+                    <label style="font-weight:600; color:#475569;">Pilih Mitra</label>
+                    <select id="ses_mitra" class="swal2-select" style="margin:4px 0 10px; width:100%;">${opts}</select>
+                    <label style="font-weight:600; color:#475569;">Label Grup (opsional)</label>
+                    <input id="ses_label" class="swal2-input" style="margin:4px 0 10px;" placeholder="Cth: Hotel X / Trip ABC">
+                    <label style="font-weight:600; color:#475569;">Jumlah Orang (pax)</label>
+                    <input id="ses_pax" type="number" min="1" class="swal2-input" style="margin:4px 0;" placeholder="Cth: 10">
+                </div>`,
+            showCancelButton: true, confirmButtonText: 'Buka Sesi', cancelButtonText: 'Batal',
+            confirmButtonColor: '#D85A30', focusConfirm: false,
+            preConfirm: () => {
+                const kode = document.getElementById('ses_mitra').value;
+                const m = this.findMitra(kode);
+                if (!m) { Swal.showValidationMessage('Pilih mitra'); return false; }
+                return { kode, label: document.getElementById('ses_label').value.trim(), pax: parseInt(document.getElementById('ses_pax').value) || 0 };
+            }
+        }).then(res => {
+            if (!res.isConfirmed) return;
+            const m = this.findMitra(res.value.kode);
+            const sesiId = 'SES-' + Date.now();
+            this.state.mitraSessions.unshift({
+                sesiId, mitraKode: m.kode, mitraNama: m.nama, mitraTier: m.tier,
+                label: res.value.label, pax: res.value.pax,
+                openedAt: new Date().toISOString(), closedAt: null
+            });
+            this.state.activeSessionId = sesiId;
+            this.saveData();
+            this.renderSessionChips();
+            Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: `Rombongan ${m.nama} dibuka`, showConfirmButton: false, timer: 1400 });
+        });
+    },
+
+    sessionStats: function(sesiId) {
+        let trxCount = 0, omset = 0, komisi = 0;
+        (this.state.komisiLog || []).forEach(k => {
+            if (k.sesiId === sesiId) { trxCount++; omset += cleanNumber(k.omset) || 0; komisi += cleanNumber(k.komisi) || 0; }
+        });
+        return { trxCount, omset, komisi };
+    },
+
+    selectSession: function(sesiId) {
+        this.state.activeSessionId = (this.state.activeSessionId === sesiId) ? null : sesiId;
+        this.renderSessionChips();
+    },
+
+    closeSession: function(sesiId) {
+        const s = this.state.mitraSessions.find(x => x.sesiId === sesiId);
+        if (!s) return;
+        const st = this.sessionStats(sesiId);
+        const kurang = s.pax > 0 && st.trxCount < s.pax;
+        const html = `<div style="text-align:left; font-size:0.9rem;">
+            <div><b>${s.mitraNama}</b>${s.label ? ' · ' + s.label : ''}</div>
+            <div style="margin-top:6px;">Belanja: <b>${st.trxCount}${s.pax ? ' / ' + s.pax : ''}</b> orang</div>
+            <div>Omset: <b>${formatRupiah(st.omset)}</b></div>
+            <div>Komisi (${this.tierPersen(s.mitraTier)}%): <b style="color:#D85A30;">${formatRupiah(st.komisi)}</b></div>
+            ${kurang ? `<div style="margin-top:8px; color:#b45309; background:#fef3c7; padding:6px 8px; border-radius:6px;">⚠️ Hanya ${st.trxCount} dari ${s.pax} orang yang belanja.</div>` : ''}
+        </div>`;
+        Swal.fire({
+            title: 'Tutup Rombongan?', html, icon: kurang ? 'warning' : 'question',
+            showCancelButton: true, confirmButtonText: 'Tutup Sesi', cancelButtonText: 'Batal', confirmButtonColor: '#D85A30'
+        }).then(r => {
+            if (!r.isConfirmed) return;
+            s.closedAt = new Date().toISOString();
+            s.finalTrxCount = st.trxCount;
+            if (this.state.activeSessionId === sesiId) this.state.activeSessionId = null;
+            this.saveData();
+            this.renderSessionChips();
+        });
+    },
+
+    renderSessionChips: function() {
+        const box = document.getElementById('sessionChips');
+        if (!box) return;
+        const open = this.state.mitraSessions.filter(s => !s.closedAt);
+        if (open.length === 0) {
+            box.innerHTML = '<div style="font-size:0.78rem; color:#94a3b8; padding:2px 0;">Tidak ada rombongan aktif. Pelanggan biasa? Lewati saja.</div>';
+            return;
+        }
+        box.innerHTML = '';
+        open.forEach(s => {
+            const st = this.sessionStats(s.sesiId);
+            const sel = this.state.activeSessionId === s.sesiId;
+            const chip = document.createElement('div');
+            chip.style.cssText = `flex:1; min-width:150px; border-radius:12px; padding:8px 10px; cursor:pointer; ${sel ? 'background:#FAECE7; border:2px solid #D85A30;' : 'background:#f8fafc; border:1px solid #e2e8f0;'}`;
+            chip.onclick = () => this.selectSession(s.sesiId);
+            chip.innerHTML = `
+                <div style="display:flex; justify-content:space-between; align-items:center; gap:6px;">
+                    <span style="font-weight:700; font-size:0.84rem; color:${sel ? '#712B13' : '#1e293b'}; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">🚐 ${s.mitraNama}</span>
+                    <span onclick="event.stopPropagation(); app.closeSession('${s.sesiId}')" title="Tutup sesi" style="color:#94a3b8; font-size:0.9rem; padding:0 2px;"><i class="fas fa-times-circle"></i></span>
+                </div>
+                <div style="font-size:0.72rem; color:${sel ? '#993C1D' : '#94a3b8'}; margin-top:1px;">${s.label ? s.label + ' · ' : ''}${s.mitraTier} ${this.tierPersen(s.mitraTier)}%</div>
+                <div style="display:flex; justify-content:space-between; margin-top:4px; font-size:0.78rem; color:${sel ? '#712B13' : '#475569'};">
+                    <span><i class="fas fa-users"></i> ${st.trxCount}${s.pax ? '/' + s.pax : ''}</span>
+                    <span style="font-weight:600;">${formatRupiah(st.omset)}</span>
+                </div>
+                ${sel ? '<div style="font-size:0.68rem; color:#993C1D; margin-top:3px; text-align:center;">● transaksi ditandai ke grup ini</div>' : ''}`;
+            box.appendChild(chip);
+        });
+    },
+
+    // ---------- Atribusi mitra di checkout ----------
+    getCheckoutMitra: function() {
+        // Prioritas 1: sesi rombongan terpilih (masih terbuka)
+        if (this.state.activeSessionId) {
+            const s = this.state.mitraSessions.find(x => x.sesiId === this.state.activeSessionId && !x.closedAt);
+            if (s) {
+                const m = this.findMitra(s.mitraKode);
+                const tier = m ? m.tier : s.mitraTier;
+                return { kode: s.mitraKode, nama: s.mitraNama, tier, persen: this.tierPersen(tier), sesiId: s.sesiId };
+            }
+        }
+        // Prioritas 2: kode referral manual (pelanggan lepasan 1-2 orang)
+        const el = document.getElementById('checkoutReferral');
+        const code = el ? el.value.trim() : '';
+        if (code) {
+            const m = this.findMitra(code);
+            if (m && m.status !== 'nonaktif') {
+                return { kode: m.kode, nama: m.nama, tier: m.tier, persen: this.tierPersen(m.tier), sesiId: null };
+            }
+        }
+        return null;
+    },
+
+    updateCheckoutMitraInfo: function() {
+        const infoEl = document.getElementById('checkoutMitraInfo');
+        const refWrap = document.getElementById('checkoutReferralWrap');
+        if (!infoEl) return;
+        const sesiAktif = this.state.activeSessionId && this.state.mitraSessions.some(x => x.sesiId === this.state.activeSessionId && !x.closedAt);
+        // Sembunyikan input manual bila sudah ada sesi terpilih
+        if (refWrap) refWrap.style.display = sesiAktif ? 'none' : '';
+        const mitra = this.getCheckoutMitra();
+        if (!mitra) {
+            infoEl.style.display = 'none';
+            infoEl.innerHTML = '';
+            return;
+        }
+        const total = this.state.tempTotal || 0;
+        const komisi = Math.round(total * mitra.persen / 100);
+        // Estimasi HPP keranjang utk peringatan margin
+        let estHpp = 0;
+        this.state.cart.forEach(it => { estHpp += this.getProductCostPrice(it) * this._itemQtys(it).total; });
+        const margin = total - estHpp;
+        const rugi = komisi > margin;
+        infoEl.style.display = 'block';
+        infoEl.innerHTML = `
+            <div style="background:${rugi ? '#fef2f2' : '#faf5ff'}; border:1px solid ${rugi ? '#fecaca' : '#e9d5ff'}; border-radius:8px; padding:8px 10px; font-size:0.85rem;">
+                <div style="display:flex; justify-content:space-between;">
+                    <span>🚐 ${mitra.nama} <span style="color:#8b5cf6;">(${mitra.tier} ${mitra.persen}%)</span>${mitra.sesiId ? ' · sesi' : ' · manual'}</span>
+                    <b style="color:#8b5cf6;">Komisi ${formatRupiah(komisi)}</b>
+                </div>
+                ${rugi ? `<div style="color:#b91c1c; margin-top:4px; font-size:0.78rem;">⚠️ Komisi melebihi margin (est. ${formatRupiah(margin)}) — laba transaksi ini akan minus.</div>` : ''}
+            </div>`;
+    },
+
+    // ---------- Laporan Mitra ----------
+    initMitraReport: function() {
+        const today = this._localYMD();
+        const fromEl = document.getElementById('mitraReportFrom');
+        const toEl = document.getElementById('mitraReportTo');
+        if (fromEl && !fromEl.value) fromEl.value = today;
+        if (toEl && !toEl.value) toEl.value = today;
+        this.renderMitraReport();
+    },
+
+    renderMitraReport: function() {
+        const from = document.getElementById('mitraReportFrom')?.value || this._localYMD();
+        const to = document.getElementById('mitraReportTo')?.value || this._localYMD();
+        const rows = (this.state.komisiLog || []).filter(k => {
+            const d = this._localYMD(k.timestamp);
+            return d >= from && d <= to;
+        });
+        const summaryEl = document.getElementById('mitraReportSummary');
+        const bodyEl = document.getElementById('mitraReportBody');
+        if (!bodyEl) return;
+
+        if (rows.length === 0) {
+            if (summaryEl) summaryEl.innerHTML = '';
+            bodyEl.innerHTML = '<div class="empty-cart" style="padding:1.5rem;"><p>Belum ada komisi pada rentang tanggal ini.</p></div>';
+            return;
+        }
+
+        const byMitra = {};
+        let totOmset = 0, totKomisi = 0, totBelum = 0;
+        const sesiSet = {};
+        rows.forEach(k => {
+            if (!byMitra[k.mitraKode]) byMitra[k.mitraKode] = { nama: k.mitraNama, tier: k.tier, trx: 0, omset: 0, komisi: 0, belum: 0, sesi: new Set() };
+            const g = byMitra[k.mitraKode];
+            g.trx++; g.omset += cleanNumber(k.omset) || 0; g.komisi += cleanNumber(k.komisi) || 0;
+            if (!k.paid) g.belum += cleanNumber(k.komisi) || 0;
+            if (k.sesiId) g.sesi.add(k.sesiId);
+            totOmset += cleanNumber(k.omset) || 0; totKomisi += cleanNumber(k.komisi) || 0;
+            if (!k.paid) totBelum += cleanNumber(k.komisi) || 0;
+        });
+
+        if (summaryEl) {
+            summaryEl.innerHTML = `
+                <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:12px;">
+                    <div style="flex:1; min-width:110px; background:#f0fdf4; border-radius:10px; padding:10px;"><div style="font-size:0.72rem; color:#16a34a;">Omset Referral</div><div style="font-weight:700; color:#15803d;">${formatRupiah(totOmset)}</div></div>
+                    <div style="flex:1; min-width:110px; background:#faf5ff; border-radius:10px; padding:10px;"><div style="font-size:0.72rem; color:#9333ea;">Total Komisi</div><div style="font-weight:700; color:#7e22ce;">${formatRupiah(totKomisi)}</div></div>
+                    <div style="flex:1; min-width:110px; background:#fef2f2; border-radius:10px; padding:10px;"><div style="font-size:0.72rem; color:#dc2626;">Belum Ditransfer</div><div style="font-weight:700; color:#b91c1c;">${formatRupiah(totBelum)}</div></div>
+                </div>`;
+        }
+
+        bodyEl.innerHTML = '';
+        Object.keys(byMitra).forEach(kode => {
+            const g = byMitra[kode];
+            const div = document.createElement('div');
+            div.className = 'product-card';
+            div.innerHTML = `
+                <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px;">
+                    <div style="flex:1;">
+                        <div style="font-weight:700; color:#1e293b;">${g.nama} <span style="font-size:0.72rem; color:#8b5cf6;">${g.tier} ${this.tierPersen(g.tier)}%</span></div>
+                        <div style="font-size:0.78rem; color:#94a3b8; margin-top:2px;">${g.trx} transaksi · ${g.sesi.size} rombongan · omset ${formatRupiah(g.omset)}</div>
+                        <div style="font-size:0.9rem; margin-top:4px;">Komisi: <b style="color:#8b5cf6;">${formatRupiah(g.komisi)}</b>${g.belum > 0 ? ` · <span style="color:#dc2626;">belum ${formatRupiah(g.belum)}</span>` : ' · <span style="color:#16a34a;">lunas</span>'}</div>
+                    </div>
+                    ${g.belum > 0 ? `<button class="btn btn-sm btn-success" style="font-size:0.75rem; white-space:nowrap;" onclick="app.markMitraTransferred('${kode}')"><i class="fas fa-check"></i> Tandai Transfer</button>` : ''}
+                </div>`;
+            bodyEl.appendChild(div);
+        });
+    },
+
+    markMitraTransferred: function(kode) {
+        const from = document.getElementById('mitraReportFrom')?.value || this._localYMD();
+        const to = document.getElementById('mitraReportTo')?.value || this._localYMD();
+        const m = this.findMitra(kode);
+        const nama = m ? m.nama : kode;
+        let total = 0, count = 0;
+        (this.state.komisiLog || []).forEach(k => {
+            const d = this._localYMD(k.timestamp);
+            if (k.mitraKode === kode && !k.paid && d >= from && d <= to) { total += cleanNumber(k.komisi) || 0; count++; }
+        });
+        if (count === 0) return;
+        Swal.fire({
+            title: 'Tandai Sudah Ditransfer?',
+            html: `<div style="font-size:0.9rem;">Komisi <b>${nama}</b><br>${count} transaksi = <b style="color:#8b5cf6;">${formatRupiah(total)}</b></div>`,
+            icon: 'question', showCancelButton: true, confirmButtonText: 'Sudah Ditransfer', cancelButtonText: 'Batal', confirmButtonColor: '#10b981'
+        }).then(r => {
+            if (!r.isConfirmed) return;
+            const now = new Date().toISOString();
+            (this.state.komisiLog || []).forEach(k => {
+                const d = this._localYMD(k.timestamp);
+                if (k.mitraKode === kode && !k.paid && d >= from && d <= to) { k.paid = true; k.paidAt = now; k.paidMethod = 'Transfer'; }
+            });
+            this.saveData();
+            this.renderMitraReport();
+            Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: `Komisi ${nama} ditandai transfer`, showConfirmButton: false, timer: 1500 });
+        });
     },
 
     showReceipt: function(trx) {
@@ -1938,10 +2397,16 @@ const app = {
     },
 
     calculateMetrics: function(transactions) {
-        let omset = 0, laba = 0, totalItems = 0, totalDiskon = 0;
+        let omset = 0, laba = 0, totalItems = 0, totalDiskon = 0, totalKomisi = 0;
         const trxCount = transactions.length;
 
+        // Peta komisi per transaksi (dari komisiLog) agar laba otomatis dikurangi komisi mitra
+        const komisiMap = {};
+        (this.state.komisiLog || []).forEach(k => { komisiMap[k.id] = (komisiMap[k.id] || 0) + (cleanNumber(k.komisi) || 0); });
+
         transactions.forEach(trx => {
+            const trxKomisi = komisiMap[trx.id] || (cleanNumber(trx.komisiAmount) || 0);
+            totalKomisi += trxKomisi;
             const trxTotal = cleanNumber(trx.total) || 0;
             const trxDisc = cleanNumber(trx.discount) || 0;
             omset += trxTotal;
@@ -1984,9 +2449,12 @@ const app = {
             }
         });
 
+        // Komisi mitra mengurangi laba bersih (diambil dari margin)
+        laba -= totalKomisi;
+
         const avg = trxCount > 0 ? omset / trxCount : 0;
 
-        return { omset, laba, trxCount, totalItems, totalDiskon, avg };
+        return { omset, laba, trxCount, totalItems, totalDiskon, totalKomisi, avg };
     },
 
     formatRupiah: function(num) {

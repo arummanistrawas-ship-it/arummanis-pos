@@ -87,6 +87,10 @@
                         <i class="fas fa-chart-line"></i>
                         <h3>Laporan Keuangan</h3>
                     </div>
+                    <div class="dash-card" onclick="app.navigate('mitra')">
+                        <i class="fas fa-bus"></i>
+                        <h3>Mitra Travel</h3>
+                    </div>
                     <div class="dash-card full-width" onclick="app.navigate('settings')">
                         <i class="fas fa-cog"></i>
                         <h3>Pengaturan</h3>
@@ -102,6 +106,13 @@
             <!-- 2. POS (TRANSAKSI BARU) -->
             <section id="view-pos" class="view hidden">
                 <div class="card scanner-section">
+                    <div style="border-bottom:1px dashed #e2e8f0; padding-bottom:10px; margin-bottom:10px;">
+                        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
+                            <h2 style="margin:0; font-size:0.95rem;"><i class="fas fa-bus"></i> Rombongan Aktif</h2>
+                            <button class="btn btn-sm btn-secondary" onclick="app.openSessionPrompt()" style="font-size:0.78rem;"><i class="fas fa-plus"></i> Buka Rombongan</button>
+                        </div>
+                        <div id="sessionChips" style="display:flex; gap:8px; flex-wrap:wrap;"></div>
+                    </div>
                     <div class="section-header">
                         <h2><i class="fas fa-barcode"></i> Tambah Item</h2>
                         <button id="toggleCameraBtn" class="btn btn-primary btn-sm">
@@ -192,6 +203,12 @@
                         </div>
                     </div>
                     
+                    <div id="checkoutReferralWrap" class="form-group">
+                        <label><i class="fas fa-bus"></i> Kode Referral Mitra (opsional)</label>
+                        <input type="text" id="checkoutReferral" class="input-full" placeholder="Cth: LKT-BUDI-01" autocomplete="off" oninput="app.updateCheckoutMitraInfo()">
+                    </div>
+                    <div id="checkoutMitraInfo" style="display:none; margin-bottom:10px;"></div>
+
                     <div class="action-buttons-checkout mt-1">
                         <button type="button" id="btnCheckoutLunas" onclick="app.processCheckoutLunas()" class="btn btn-success btn-lg">
                             <i class="fas fa-print"></i> Lanjut Cetak Resi
@@ -506,6 +523,37 @@
                 <button class="report-share-btn" onclick="app.shareReportWhatsApp()" style="margin-top: 12px;">
                     <i class="fab fa-whatsapp" style="font-size: 1.3rem;"></i> Bagikan Laporan via WhatsApp
                 </button>
+            </section>
+
+            <!-- MITRA TRAVEL (REFERRAL) -->
+            <section id="view-mitra" class="view hidden">
+                <div class="card">
+                    <div style="display:flex; gap:10px; margin-bottom:1rem;">
+                        <button onclick="app.showMitraForm()" class="btn btn-primary" style="flex:1;"><i class="fas fa-user-plus"></i> Daftar Mitra Baru</button>
+                        <button onclick="app.navigate('mitraReport')" class="btn btn-secondary" style="flex:1;"><i class="fas fa-coins"></i> Laporan Komisi</button>
+                    </div>
+                    <input type="text" id="searchMitraInput" class="input-full mb-1" placeholder="Cari nama / kode / HP..." oninput="app.renderMitraList()">
+                    <div class="product-list" id="mitraList"></div>
+                </div>
+            </section>
+
+            <!-- LAPORAN MITRA (KOMISI) -->
+            <section id="view-mitraReport" class="view hidden">
+                <div class="card">
+                    <h3 style="color: var(--primary); margin:0 0 10px; border-bottom:2px solid #f1f5f9; padding-bottom:8px;"><i class="fas fa-coins"></i> Laporan Komisi Mitra</h3>
+                    <div style="display:flex; gap:10px; align-items:flex-end; margin-bottom:12px;">
+                        <div style="flex:1;">
+                            <label style="font-size:0.78rem; color:#64748b;">Dari</label>
+                            <input type="date" id="mitraReportFrom" class="input-full" onchange="app.renderMitraReport()">
+                        </div>
+                        <div style="flex:1;">
+                            <label style="font-size:0.78rem; color:#64748b;">Sampai</label>
+                            <input type="date" id="mitraReportTo" class="input-full" onchange="app.renderMitraReport()">
+                        </div>
+                    </div>
+                    <div id="mitraReportSummary"></div>
+                    <div class="product-list" id="mitraReportBody"></div>
+                </div>
             </section>
 
             <!-- 8. SETTINGS / PENGATURAN -->
