@@ -88,6 +88,14 @@ function doGet(e) {
       return getTransactions();
     }
 
+    if (action === 'get_mitra') {
+      return getMitra();
+    }
+
+    if (action === 'get_komisi') {
+      return getKomisi();
+    }
+
     if (action === 'recalculate_profits') {
       // recalculate menulis ke sheet → jalankan di dalam lock agar tidak bentrok dengan sync device lain
       var res = withScriptLock(function() { return recalculateTransactionProfits(); });
@@ -149,6 +157,10 @@ function doPost(e) {
           case 'save_settings':      return saveSettings(payload.data);
           case 'update_batch':       return updateBatch(payload.data);
           case 'delete_transaction': return deleteTransaction(payload.data);
+          case 'mitra':              return saveMitra(payload.data);
+          case 'delete_mitra':       return deleteMitra(payload.data);
+          case 'komisi':             return saveKomisi(payload.data);
+          case 'komisi_paid':        return markKomisiPaid(payload.data);
           default:                   return errorResponse('Tipe sync tidak dikenal: ' + payload.type);
         }
       });
@@ -232,6 +244,18 @@ function initSheets() {
   if (!sSheet) {
     sSheet = ss.insertSheet("Pengaturan");
     sSheet.appendRow(["Key", "Value"]);
+  }
+
+  // Sheet Mitra Travel (referral) & log komisi
+  var mSheet = ss.getSheetByName("Mitra");
+  if (!mSheet) {
+    mSheet = ss.insertSheet("Mitra");
+    mSheet.appendRow(["Kode", "Nama", "HP", "Travel", "Tier", "Status", "Catatan", "Dibuat"]);
+  }
+  var kSheet = ss.getSheetByName("KomisiLog");
+  if (!kSheet) {
+    kSheet = ss.insertSheet("KomisiLog");
+    kSheet.appendRow(["ID", "Waktu", "Kode_Mitra", "Nama_Mitra", "Tier", "Persen", "Omset", "Komisi", "Sesi_ID", "Paid", "Paid_At", "Paid_Method"]);
   }
 
   // CATATAN PERFORMA: sinkronisasi berat (nama batch & harga modal) TIDAK dijalankan di sini,
@@ -1231,8 +1255,117 @@ function saveSettings(data) {
   if (rows.length > 0) {
     sheet.getRange(2, 1, rows.length, 2).setValues(rows);
   }
-  
+
   return successResponse('Pengaturan berhasil disimpan');
+}
+
+// ==================== MITRA TRAVEL (REFERRAL & KOMISI) ====================
+
+function getMitra() {
+  initSheets();
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Mitra");
+  if (!sheet) return successResponse([]);
+  var data = sheet.getDataRange().getDisplayValues();
+  if (data.length < 2) return successResponse([]);
+  var out = [];
+  for (var i = 1; i < data.length; i++) {
+    if (!data[i][0]) continue;
+    out.push({
+      kode: data[i][0], nama: data[i][1], hp: data[i][2], travel: data[i][3],
+      tier: data[i][4] || 'Biasa', status: data[i][5] || 'aktif',
+      catatan: data[i][6], createdAt: data[i][7]
+    });
+  }
+  return successResponse(out);
+}
+
+function saveMitra(data) {
+  if (!data || !data.kode) return errorResponse('Data mitra tidak valid (kode kosong)');
+  initSheets();
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Mitra");
+  var rows = sheet.getDataRange().getValues();
+  var row = [data.kode, data.nama || '', data.hp || '', data.travel || '', data.tier || 'Biasa',
+             data.status || 'aktif', data.catatan || '', data.createdAt || new Date().toISOString()];
+  for (var i = 1; i < rows.length; i++) {
+    if ((rows[i][0] || '').toString() === data.kode.toString()) {
+      sheet.getRange(i + 1, 1, 1, row.length).setValues([row]);
+      return successResponse('Mitra diperbarui');
+    }
+  }
+  sheet.appendRow(row);
+  return successResponse('Mitra ditambahkan');
+}
+
+function deleteMitra(data) {
+  if (!data || !data.kode) return errorResponse('Kode mitra kosong');
+  initSheets();
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("Mitra");
+  var rows = sheet.getDataRange().getValues();
+  for (var i = rows.length - 1; i >= 1; i--) {
+    if ((rows[i][0] || '').toString() === data.kode.toString()) {
+      sheet.deleteRow(i + 1);
+      return successResponse('Mitra dihapus');
+    }
+  }
+  return successResponse('Mitra tidak ditemukan (dianggap sudah terhapus)');
+}
+
+function getKomisi() {
+  initSheets();
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("KomisiLog");
+  if (!sheet) return successResponse([]);
+  var data = sheet.getDataRange().getDisplayValues();
+  if (data.length < 2) return successResponse([]);
+  var out = [];
+  for (var i = 1; i < data.length; i++) {
+    if (!data[i][0]) continue;
+    var paidRaw = (data[i][9] || '').toString().toUpperCase();
+    out.push({
+      id: data[i][0], timestamp: data[i][1], mitraKode: data[i][2], mitraNama: data[i][3],
+      tier: data[i][4], persen: cleanNumber(data[i][5]), omset: cleanNumber(data[i][6]),
+      komisi: cleanNumber(data[i][7]), sesiId: data[i][8] || null,
+      paid: (paidRaw === 'TRUE' || paidRaw === '1' || paidRaw === 'YES' || paidRaw === 'LUNAS'),
+      paidAt: data[i][10] || null, paidMethod: data[i][11] || null
+    });
+  }
+  return successResponse(out);
+}
+
+function saveKomisi(data) {
+  if (!data || !data.id) return errorResponse('Data komisi tidak valid (id kosong)');
+  initSheets();
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("KomisiLog");
+  var rows = sheet.getDataRange().getValues();
+  var row = [data.id, data.timestamp || new Date().toISOString(), data.mitraKode || '', data.mitraNama || '',
+             data.tier || '', cleanNumber(data.persen), cleanNumber(data.omset), cleanNumber(data.komisi),
+             data.sesiId || '', data.paid ? 'TRUE' : 'FALSE', data.paidAt || '', data.paidMethod || ''];
+  for (var i = 1; i < rows.length; i++) {
+    if ((rows[i][0] || '').toString() === data.id.toString()) {
+      sheet.getRange(i + 1, 1, 1, row.length).setValues([row]);
+      return successResponse('Komisi diperbarui');
+    }
+  }
+  sheet.appendRow(row);
+  return successResponse('Komisi dicatat');
+}
+
+function markKomisiPaid(data) {
+  if (!data || !data.ids || !data.ids.length) return errorResponse('Daftar ID komisi kosong');
+  initSheets();
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName("KomisiLog");
+  var rows = sheet.getDataRange().getValues();
+  var idSet = {};
+  for (var j = 0; j < data.ids.length; j++) idSet[data.ids[j].toString()] = true;
+  var paidAt = data.paidAt || new Date().toISOString();
+  var method = data.paidMethod || 'Transfer';
+  var count = 0;
+  for (var i = 1; i < rows.length; i++) {
+    if (idSet[(rows[i][0] || '').toString()]) {
+      sheet.getRange(i + 1, 10, 1, 3).setValues([['TRUE', paidAt, method]]);
+      count++;
+    }
+  }
+  return successResponse('Komisi ditandai lunas: ' + count);
 }
 
 function updateBatch(data) {

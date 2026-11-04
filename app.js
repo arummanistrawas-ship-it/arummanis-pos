@@ -438,8 +438,8 @@ const app = {
             if(viewId === 'settings') { titleEl.textContent = 'Pengaturan'; this.showSettingsForm(); }
             if(viewId === 'saved') { titleEl.textContent = 'Transaksi Tersimpan'; this.renderSavedTransactions(); }
             if(viewId === 'reports') { titleEl.textContent = 'Laporan Keuangan'; this.initReports(); this.refreshTransactionsFromServer(); }
-            if(viewId === 'mitra') { titleEl.textContent = 'Mitra Travel'; this.renderMitraList(); }
-            if(viewId === 'mitraReport') { titleEl.textContent = 'Laporan Mitra'; this.initMitraReport(); }
+            if(viewId === 'mitra') { titleEl.textContent = 'Mitra Travel'; this.renderMitraList(); this.refreshMitraFromServer(); }
+            if(viewId === 'mitraReport') { titleEl.textContent = 'Laporan Mitra'; this.initMitraReport(); this.refreshMitraFromServer(); this.refreshKomisiFromServer(); }
         }
     },
 
@@ -492,6 +492,8 @@ const app = {
         try { await this.refreshProductsFromServer(); } catch (e) { console.error('BG produk:', e); }
         try { await this.refreshSettingsFromServer(); } catch (e) { console.error('BG settings:', e); }
         try { await this.refreshTransactionsFromServer(); } catch (e) { console.error('BG transaksi:', e); }
+        try { await this.refreshMitraFromServer(); } catch (e) { console.error('BG mitra:', e); }
+        try { await this.refreshKomisiFromServer(); } catch (e) { console.error('BG komisi:', e); }
         // Kirim antrean offline yang tertunda setelah konek kembali
         this.syncData();
     },
@@ -1433,8 +1435,8 @@ const app = {
             trx.komisiPersen = mitra.persen;
             trx.komisiAmount = komisiAmount;
             trx.sesiId = mitra.sesiId || null;
-            // Catat di log komisi (sumber kebenaran Laporan Mitra, lepas dari sync server)
-            this.state.komisiLog.unshift({
+            // Catat di log komisi (sumber kebenaran Laporan Mitra) + antrekan ke server
+            const komisiEntry = {
                 id: trx.id,
                 timestamp: trx.timestamp,
                 mitraKode: mitra.kode,
@@ -1447,7 +1449,9 @@ const app = {
                 paid: false,        // default: belum ditransfer ke sopir
                 paidAt: null,
                 paidMethod: null
-            });
+            };
+            this.state.komisiLog.unshift(komisiEntry);
+            this.state.syncQueue.push({ type: 'komisi', data: komisiEntry });
         }
         // Laba bersih = omset − HPP − komisi (komisi diambil dari margin)
         trx.netProfit = (parseFloat(trx.total) || 0) - localHPP - komisiAmount;
@@ -1588,17 +1592,22 @@ const app = {
         }).then(res => {
             if (!res.isConfirmed) return;
             const d = res.value;
+            let saved;
             if (m) {
                 Object.assign(m, d);
+                saved = m;
             } else {
-                this.state.mitra.push({
+                saved = {
                     kode: this.generateMitraKode(d.nama),
                     nama: d.nama, hp: d.hp, travel: d.travel, tier: d.tier,
                     status: 'aktif', catatan: '', createdAt: new Date().toISOString()
-                });
+                };
+                this.state.mitra.push(saved);
             }
+            this.state.syncQueue.push({ type: 'mitra', data: saved });
             this.saveData();
             this.renderMitraList();
+            this.syncData();
             Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: m ? 'Mitra diperbarui' : 'Mitra terdaftar', showConfirmButton: false, timer: 1400 });
         });
     },
@@ -1607,8 +1616,10 @@ const app = {
         const m = this.findMitra(kode);
         if (!m) return;
         m.status = (m.status === 'nonaktif') ? 'aktif' : 'nonaktif';
+        this.state.syncQueue.push({ type: 'mitra', data: m });
         this.saveData();
         this.renderMitraList();
+        this.syncData();
     },
 
     // ---------- Sesi Rombongan ----------
@@ -1864,12 +1875,15 @@ const app = {
         }).then(r => {
             if (!r.isConfirmed) return;
             const now = new Date().toISOString();
+            const paidIds = [];
             (this.state.komisiLog || []).forEach(k => {
                 const d = this._localYMD(k.timestamp);
-                if (k.mitraKode === kode && !k.paid && d >= from && d <= to) { k.paid = true; k.paidAt = now; k.paidMethod = 'Transfer'; }
+                if (k.mitraKode === kode && !k.paid && d >= from && d <= to) { k.paid = true; k.paidAt = now; k.paidMethod = 'Transfer'; paidIds.push(k.id); }
             });
+            if (paidIds.length) this.state.syncQueue.push({ type: 'komisi_paid', data: { ids: paidIds, paidAt: now, paidMethod: 'Transfer' } });
             this.saveData();
             this.renderMitraReport();
+            this.syncData();
             Swal.fire({ toast: true, position: 'top-end', icon: 'success', title: `Komisi ${nama} ditandai transfer`, showConfirmButton: false, timer: 1500 });
         });
     },
@@ -3546,6 +3560,8 @@ const app = {
             await this.refreshProductsFromServer();
             await this.refreshSettingsFromServer();
             await this.refreshTransactionsFromServer();
+            await this.refreshMitraFromServer();
+            await this.refreshKomisiFromServer();
             setTimeout(() => this.checkOfflineQueue(), 2000);
         } else {
             this.checkOfflineQueue();
@@ -3786,6 +3802,55 @@ const app = {
         } catch (e) {
             console.error('Gagal memuat settings dari server:', e);
         }
+    },
+
+    // Tarik data mitra dari server (merge aman dengan antrean lokal yang belum tersinkron)
+    refreshMitraFromServer: async function() {
+        if (!navigator.onLine || GAS_URL === 'YOUR_GOOGLE_APPS_SCRIPT_WEB_APP_URL') return;
+        try {
+            const resp = await fetch(`${GAS_URL}?action=get_mitra`);
+            const resData = await resp.json();
+            if (resData.status === 'success' && Array.isArray(resData.data)) {
+                const map = {};
+                // Mulai dari lokal (jangan hilangkan mitra lokal yang belum ada di server), server menimpa yang sama
+                (this.state.mitra || []).forEach(m => { if (m.kode) map[m.kode] = m; });
+                resData.data.forEach(m => { if (m.kode) map[m.kode] = m; });
+                // Perubahan lokal yang belum terupload menang
+                const pendingDelete = new Set();
+                this.state.syncQueue.forEach(q => {
+                    if (q.type === 'mitra' && q.data && q.data.kode) map[q.data.kode] = q.data;
+                    if (q.type === 'delete_mitra' && q.data && q.data.kode) pendingDelete.add(q.data.kode.toString());
+                });
+                pendingDelete.forEach(k => { delete map[k]; });
+                this.state.mitra = Object.keys(map).map(k => map[k]);
+                this.saveData();
+                if (this.state.currentView === 'mitra') this.renderMitraList();
+            }
+        } catch (e) { console.error('refresh mitra:', e); }
+    },
+
+    // Tarik log komisi dari server (merge aman dengan antrean lokal)
+    refreshKomisiFromServer: async function() {
+        if (!navigator.onLine || GAS_URL === 'YOUR_GOOGLE_APPS_SCRIPT_WEB_APP_URL') return;
+        try {
+            const resp = await fetch(`${GAS_URL}?action=get_komisi`);
+            const resData = await resp.json();
+            if (resData.status === 'success' && Array.isArray(resData.data)) {
+                const map = {};
+                // Mulai dari lokal (jangan hilangkan komisi lokal yang belum tersinkron), server menimpa id yang sama
+                (this.state.komisiLog || []).forEach(k => { if (k.id) map[k.id] = k; });
+                resData.data.forEach(k => { if (k.id) map[k.id] = k; });
+                const pendingPaid = new Set();
+                this.state.syncQueue.forEach(q => {
+                    if (q.type === 'komisi' && q.data && q.data.id) map[q.data.id] = q.data;
+                    if (q.type === 'komisi_paid' && q.data && Array.isArray(q.data.ids)) q.data.ids.forEach(id => pendingPaid.add(id.toString()));
+                });
+                pendingPaid.forEach(id => { if (map[id]) map[id] = Object.assign({}, map[id], { paid: true }); });
+                this.state.komisiLog = Object.keys(map).map(id => map[id]);
+                this.saveData();
+                if (this.state.currentView === 'mitraReport') this.renderMitraReport();
+            }
+        } catch (e) { console.error('refresh komisi:', e); }
     },
 
     showSettingsForm: function() {
