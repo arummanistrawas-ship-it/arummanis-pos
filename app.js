@@ -1670,13 +1670,23 @@ const app = {
             }).then(r => { if (r.isConfirmed) this.navigate('mitra'); });
             return;
         }
-        const opts = aktif.map(m => { const t = this.effectiveTier(m); return `<option value="${m.kode}">${m.nama} · ${t} ${this.tierPersen(t)}% (${m.kode})</option>`; }).join('');
+        const rowHtml = aktif.map(m => {
+            const t = this.effectiveTier(m);
+            const search = `${m.nama} ${m.kode} ${m.travel || ''}`.toLowerCase().replace(/"/g, '');
+            return `<div class="ses-mitra-row" data-kode="${m.kode}" data-search="${search}" style="padding:8px 10px; border-radius:8px; cursor:pointer; border:1px solid transparent;">
+                    <div style="font-weight:600; color:#1e293b;">${m.nama} <span style="font-size:0.75rem; color:#8b5cf6;">${t} ${this.tierPersen(t)}%</span></div>
+                    <div style="font-family:monospace; font-size:0.72rem; color:#94a3b8;">${m.kode}${m.travel ? ' · ' + m.travel : ''}</div>
+                </div>`;
+        }).join('');
         Swal.fire({
             title: '🚐 Buka Rombongan',
             html: `
                 <div style="text-align:left; font-size:0.9rem;">
                     <label style="font-weight:600; color:#475569;">Pilih Mitra</label>
-                    <select id="ses_mitra" class="swal2-select" style="margin:4px 0 10px; width:100%;">${opts}</select>
+                    <input id="ses_search" class="swal2-input" style="margin:4px 0 6px;" placeholder="Cari nama / kode / travel..." autocomplete="off">
+                    <input type="hidden" id="ses_mitra">
+                    <div id="ses_list" style="max-height:170px; overflow-y:auto; border:1px solid #e2e8f0; border-radius:8px; padding:4px; margin-bottom:10px;">${rowHtml}</div>
+                    <div id="ses_empty" style="display:none; color:#94a3b8; font-size:0.82rem; padding:6px 2px;">Mitra tidak ditemukan.</div>
                     <label style="font-weight:600; color:#475569;">Label Grup (opsional)</label>
                     <input id="ses_label" class="swal2-input" style="margin:4px 0 10px;" placeholder="Cth: Hotel X / Trip ABC">
                     <label style="font-weight:600; color:#475569;">Jumlah Orang (pax)</label>
@@ -1684,10 +1694,39 @@ const app = {
                 </div>`,
             showCancelButton: true, confirmButtonText: 'Buka Sesi', cancelButtonText: 'Batal',
             confirmButtonColor: '#D85A30', focusConfirm: false,
+            didOpen: () => {
+                const list = document.getElementById('ses_list');
+                const hidden = document.getElementById('ses_mitra');
+                const search = document.getElementById('ses_search');
+                const empty = document.getElementById('ses_empty');
+                const rows = Array.from(list.querySelectorAll('.ses-mitra-row'));
+                const select = (row) => {
+                    rows.forEach(r => { r.style.background = ''; r.style.borderColor = 'transparent'; });
+                    row.style.background = '#FAECE7'; row.style.borderColor = '#D85A30';
+                    hidden.value = row.dataset.kode;
+                };
+                rows.forEach(r => r.addEventListener('click', () => select(r)));
+                if (rows.length) select(rows[0]);
+                search.addEventListener('input', () => {
+                    const q = search.value.trim().toLowerCase();
+                    let firstVisible = null;
+                    rows.forEach(r => {
+                        const match = r.dataset.search.indexOf(q) > -1;
+                        r.style.display = match ? '' : 'none';
+                        if (match && !firstVisible) firstVisible = r;
+                    });
+                    empty.style.display = firstVisible ? 'none' : 'block';
+                    const cur = rows.find(r => r.dataset.kode === hidden.value);
+                    if (!cur || cur.style.display === 'none') {
+                        if (firstVisible) select(firstVisible); else hidden.value = '';
+                    }
+                });
+                setTimeout(() => search.focus(), 50);
+            },
             preConfirm: () => {
                 const kode = document.getElementById('ses_mitra').value;
                 const m = this.findMitra(kode);
-                if (!m) { Swal.showValidationMessage('Pilih mitra'); return false; }
+                if (!m) { Swal.showValidationMessage('Pilih mitra dulu'); return false; }
                 return { kode, label: document.getElementById('ses_label').value.trim(), pax: parseInt(document.getElementById('ses_pax').value) || 0 };
             }
         }).then(res => {
